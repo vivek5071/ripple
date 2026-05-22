@@ -1,0 +1,37 @@
+name: 'Blast Radius'
+description: 'Detect downstream-impacted files on PRs and route owners for approval'
+author: 'blast-radius'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+    default: ${{ github.token }}
+  mode:
+    description: '"advisory" posts a report only. "gate" also requests reviews from owners.'
+    required: false
+    default: 'advisory'
+  min-symbol-length:
+    description: 'Minimum chars for a symbol to trigger Track B grep. Prevents flooding on short names like "get".'
+    required: false
+    default: '5'
+  max-files-to-search:
+    description: 'Cap on files scanned by ripgrep. Large monorepos tune this down.'
+    required: false
+    default: '50000'
+  max-owners-per-pr:
+    description: 'If more unique owners are found than this cap, falls back to advisory for this run.'
+    required: false
+    default: '10'
+  team-lead:
+    description: 'GitHub handle substituted when the PR author is the sole owner of every impacted file.'
+    required: false
+    default: ''
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'radio'
+  color: 'orange'
