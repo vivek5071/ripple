@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/ripple/ripple/blob/main/ripple.schema.json",
-  "title": "Ripple ownership config",
-  "description": "Defines file ownership for the ripple GitHub Action. Place this file at .ripple.yml in your repository root.",
+  "title": "Ripple config",
+  "description": "Configures the Ripple GitHub Action. Place this file at .ripple.yml in your repository root.",
   "type": "object",
   "properties": {
     "paths": {
@@ -33,6 +33,79 @@
           "src/auth/**": "carol"
         }
       ]
+    },
+    "ai-review": {
+      "type": "object",
+      "description": "Optional LLM-powered code review. Posts findings as a PR comment via any OpenAI-compatible endpoint.",
+      "required": ["enabled", "api-url", "model"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Set to true to enable AI Review on PRs."
+        },
+        "api-url": {
+          "type": "string",
+          "description": "Base URL of an OpenAI-compatible endpoint without /v1 (e.g. https://api.openai.com, http://localhost:11434 for Ollama). Trailing /v1 is stripped automatically.",
+          "examples": ["https://api.openai.com", "http://localhost:11434"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name to use (e.g. gpt-4o, claude-opus-4-7, llama3).",
+          "examples": ["gpt-4o", "claude-opus-4-7", "llama3"]
+        },
+        "focus": {
+          "type": "string",
+          "description": "Comma-separated review focus areas: logical-errors, error-handling, security, broken-assumptions, all.",
+          "default": "logical-errors,error-handling",
+          "examples": ["logical-errors,error-handling", "all", "security,logical-errors"]
+        },
+        "skip-patterns": {
+          "type": "string",
+          "description": "Comma-separated micromatch glob patterns for files to skip before any LLM call (e.g. '**/*.lock,**/generated/**').",
+          "default": "",
+          "examples": ["**/*.lock,**/generated/**", "**/__snapshots__/**"]
+        },
+        "skip-label": {
+          "type": "string",
+          "description": "If this label is on the PR, skip AI Review entirely.",
+          "default": "skip-ai-review"
+        },
+        "min-file-diff-lines": {
+          "type": "integer",
+          "description": "Skip files with fewer changed lines than this threshold.",
+          "default": 1,
+          "minimum": 0
+        },
+        "min-pr-diff-lines": {
+          "type": "integer",
+          "description": "Skip the entire PR if total changed lines are below this threshold.",
+          "default": 1,
+          "minimum": 0
+        },
+        "max-file-tokens": {
+          "type": "integer",
+          "description": "Truncate a single file diff at this many characters before sending to the LLM.",
+          "default": 32000,
+          "minimum": 1000
+        },
+        "timeout-seconds": {
+          "type": "integer",
+          "description": "Per-file LLM call timeout in seconds.",
+          "default": 30,
+          "minimum": 5
+        },
+        "allow-private-networks": {
+          "type": "boolean",
+          "description": "Allow api-url to point at private IP ranges. Required for Ollama or vLLM on a private LAN runner.",
+          "default": false
+        },
+        "post-as-comment": {
+          "type": "boolean",
+          "description": "Post the review as a PR comment. Set to false to log to stdout only (useful for debugging).",
+          "default": true
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -40,9 +113,21 @@
     {
       "paths": {
         "src/api/**": "alice",
-        "src/db/**": ["bob", "charlie"],
-        "src/auth/**": "carol",
-        "src/shared/**": ["alice", "carol"]
+        "src/db/**": ["bob", "charlie"]
+      },
+      "ai-review": {
+        "enabled": true,
+        "api-url": "https://api.openai.com",
+        "model": "gpt-4o"
+      }
+    },
+    {
+      "ai-review": {
+        "enabled": true,
+        "api-url": "http://localhost:11434",
+        "model": "llama3",
+        "allow-private-networks": true,
+        "focus": "logical-errors,error-handling"
       }
     }
   ]

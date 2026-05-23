@@ -35,6 +35,12 @@ inputs:
       are forced into gate mode regardless of the mode input.
     required: false
     default: ''
+  ai-api-key:
+    description: >
+      API key for the LLM endpoint configured in .ripple.yml under ai-review.api-url.
+      Only required when ai-review.enabled is true in .ripple.yml. Masked in all logs.
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -55,6 +61,7 @@ runs:
         INPUT_MAX-OWNERS-PER-PR: ${{ inputs.max-owners-per-pr }}
         INPUT_TEAM-LEAD: ${{ inputs.team-lead }}
         INPUT_BOT-PATTERNS: ${{ inputs.bot-patterns }}
+        INPUT_AI-API-KEY: ${{ inputs.ai-api-key }}
       run: node ${{ github.action_path }}/dist/index.js
 
 branding:

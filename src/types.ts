@@ -36,6 +36,44 @@ export interface ResolvedOwner {
   resolvedVia: 'yaml' | 'git-blame' | 'unresolved'
 }
 
+export interface AiReviewConfig {
+  enabled: boolean
+  apiUrl: string
+  model: string
+  focus: string[]
+  skipPatterns: string[]
+  skipLabel: string
+  minFileDiffLines: number
+  minPrDiffLines: number
+  maxFileTokens: number
+  timeoutSeconds: number
+  allowPrivateNetworks: boolean
+  postAsComment: boolean
+}
+
+export interface FileDiff {
+  path: string
+  diff: string
+  lineCount: number
+}
+
+export interface Finding {
+  file: string
+  line: number | null
+  category: 'logical-error' | 'error-handling' | 'security' | 'broken-assumption'
+  description: string
+  impact: string
+  fix: string
+  raw?: string
+}
+
+export interface ReviewOptions {
+  config: AiReviewConfig
+  apiKey: string
+  files: FileDiff[]
+  commitSha: string
+}
+
 export interface BlastRadiusReport {
   changedFiles: ChangedFile[]
   changedSymbols: ChangedSymbol[]

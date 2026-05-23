@@ -1,6 +1,308 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
+/***/ 1542:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AI_REVIEW_MARKER = void 0;
+exports.formatAiReview = formatAiReview;
+exports.AI_REVIEW_MARKER = '<!-- ai-review-report v1 -->';
+const CATEGORY_LABEL = {
+    'logical-error': 'Logical error',
+    'error-handling': 'Missing error handling',
+    'security': 'Security issue',
+    'broken-assumption': 'Broken assumption',
+};
+function formatAiReview(findings, model, commitSha, filesReviewed, skippedFiles, timedOutFiles) {
+    const lines = [exports.AI_REVIEW_MARKER, '## AI Review', ''];
+    const realFindings = findings.filter(f => !f.raw);
+    const totalSkipped = skippedFiles.length + timedOutFiles.length;
+    lines.push(`> Model: ${model} · ${realFindings.length} issue${realFindings.length === 1 ? '' : 's'} found`);
+    lines.push('');
+    if (findings.length === 0) {
+        lines.push('No issues found.');
+        lines.push('');
+    }
+    else {
+        for (const finding of findings) {
+            if (finding.raw) {
+                lines.push(`### ⚠ Unstructured review — \`${finding.file}\``);
+                lines.push(finding.raw);
+            }
+            else {
+                const label = CATEGORY_LABEL[finding.category] ?? finding.category;
+                const loc = finding.line ? `${finding.file}:${finding.line}` : finding.file;
+                lines.push(`### ⚠ ${label} — \`${loc}\``);
+                lines.push(finding.description);
+                if (finding.impact)
+                    lines.push(`**Impact:** ${finding.impact}`);
+                if (finding.fix)
+                    lines.push(`**Fix:** ${finding.fix}`);
+            }
+            lines.push('');
+        }
+    }
+    lines.push('---');
+    const footerParts = [
+        'Advisory',
+        `Last evaluated: ${commitSha.slice(0, 7)}`,
+        `${filesReviewed} file${filesReviewed === 1 ? '' : 's'} reviewed`,
+    ];
+    if (totalSkipped > 0)
+        footerParts.push(`${totalSkipped} skipped`);
+    lines.push(`> ${footerParts.join(' · ')}`);
+    return lines.join('\n');
+}
+//# sourceMappingURL=ai-review-formatter.js.map
+
+/***/ }),
+
+/***/ 2645:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.validateApiUrl = validateApiUrl;
+exports.runAiReview = runAiReview;
+const core = __importStar(__nccwpck_require__(6966));
+const secret_sanitizer_1 = __nccwpck_require__(9268);
+const FOCUS_MAP = {
+    'logical-errors': 'logical errors and incorrect behavior',
+    'security': 'security vulnerabilities, injection risks, and exposed secrets',
+    'error-handling': 'missing or inadequate error handling and silent failure paths',
+    'broken-assumptions': 'broken assumptions about input shape, API contracts, and state',
+    'all': 'all of the above',
+};
+const FINDING_SCHEMA = {
+    type: 'object',
+    required: ['findings'],
+    properties: {
+        findings: {
+            type: 'array',
+            items: {
+                type: 'object',
+                required: ['file', 'category', 'description', 'impact', 'fix'],
+                properties: {
+                    file: { type: 'string' },
+                    line: { type: ['integer', 'null'] },
+                    category: {
+                        type: 'string',
+                        enum: ['logical-error', 'error-handling', 'security', 'broken-assumption'],
+                    },
+                    description: { type: 'string' },
+                    impact: { type: 'string' },
+                    fix: { type: 'string' },
+                },
+            },
+        },
+    },
+};
+function validateApiUrl(rawUrl, allowPrivateNetworks) {
+    let url = rawUrl.replace(/\/+$/, '');
+    if (url.endsWith('/v1')) {
+        core.warning('ai-review: api-url should not include /v1 — stripping automatically');
+        url = url.slice(0, -3);
+    }
+    let parsed;
+    try {
+        parsed = new URL(url);
+    }
+    catch {
+        throw new Error(`ai-review: invalid api-url "${rawUrl}"`);
+    }
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.protocol === 'http:' && !isLocalhost) {
+        throw new Error('ai-review: api-url must use https. Use https:// or http://localhost for local testing.');
+    }
+    if (!allowPrivateNetworks && !isLocalhost) {
+        const h = parsed.hostname;
+        const isPrivate = /^10\./.test(h) ||
+            /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h) ||
+            /^192\.168\./.test(h) ||
+            /^169\.254\./.test(h);
+        if (isPrivate) {
+            throw new Error(`ai-review: api-url points to a private IP (${h}). ` +
+                `Set allow-private-networks: true in .ripple.yml for Ollama/vLLM on a private LAN.`);
+        }
+    }
+    return url;
+}
+function buildSystemPrompt(focusList) {
+    const areas = focusList.includes('all')
+        ? FOCUS_MAP['all']
+        : focusList.map(f => FOCUS_MAP[f] ?? f).join('; ');
+    return [
+        'You are a senior engineer reviewing a pull request diff.',
+        'Identify only concrete, actionable issues. Do not praise. Do not summarize.',
+        `Focus: ${areas}.`,
+        '',
+        'For each issue respond with JSON matching the FindingSchema.',
+        'If no issues found, return an empty findings array.',
+        'Only report issues visible in the diff. Do not speculate beyond the shown code.',
+    ].join('\n');
+}
+async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+        response = await fetch(`${apiUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userContent },
+                ],
+                response_format: {
+                    type: 'json_schema',
+                    json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
+                },
+            }),
+            signal: controller.signal,
+        });
+    }
+    finally {
+        clearTimeout(timer);
+    }
+    if (response.status === 401)
+        throw new Error('ai-review: API key invalid (401)');
+    if (response.status === 403) {
+        throw new Error('ai-review: API access forbidden (403). Check API key permissions or Azure RBAC role.');
+    }
+    if (response.status === 429)
+        throw new Error('ai-review: rate limited (429)');
+    if (!response.ok)
+        throw new Error(`ai-review: LLM request failed with status ${response.status}`);
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content ?? '';
+}
+function parseFindings(content, filePath) {
+    try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed.findings)) {
+            return parsed.findings.map((f) => ({
+                file: typeof f.file === 'string' ? f.file : filePath,
+                line: typeof f.line === 'number' ? f.line : null,
+                category: f.category ?? 'logical-error',
+                description: String(f.description ?? ''),
+                impact: String(f.impact ?? ''),
+                fix: String(f.fix ?? ''),
+            }));
+        }
+    }
+    catch { /* fall through to prose fallback */ }
+    if (content.trim().length > 0) {
+        return [{ file: filePath, line: null, category: 'logical-error', description: '', impact: '', fix: '', raw: content }];
+    }
+    return [];
+}
+async function reviewFileWithRetry(file, apiUrl, apiKey, model, systemPrompt, timeoutMs, retryLimit) {
+    const { sanitized, redactedCount } = (0, secret_sanitizer_1.sanitizeDiff)(file.diff);
+    if (redactedCount > 0) {
+        core.info(`ai-review: redacted ${redactedCount} potential secret(s) in ${file.path}`);
+    }
+    const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\``;
+    core.info(`ai-review: reviewing ${file.path} (~${file.lineCount} changed lines)`);
+    let lastErr;
+    for (let attempt = 0; attempt <= retryLimit; attempt++) {
+        if (attempt > 0) {
+            await new Promise(r => setTimeout(r, 2 ** attempt * 1000));
+            core.info(`ai-review: retrying ${file.path} (attempt ${attempt + 1})`);
+        }
+        try {
+            const content = await callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs);
+            if (!content)
+                return [];
+            return parseFindings(content, file.path);
+        }
+        catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (!lastErr.message.includes('429') && !lastErr.message.includes('aborted'))
+                break;
+        }
+    }
+    throw lastErr ?? new Error('ai-review: unknown error');
+}
+async function runAiReview(options) {
+    const { config, apiKey, files } = options;
+    const apiUrl = validateApiUrl(config.apiUrl, config.allowPrivateNetworks);
+    const systemPrompt = buildSystemPrompt(config.focus);
+    const timeoutMs = config.timeoutSeconds * 1000;
+    core.setSecret(apiKey);
+    const allFindings = [];
+    const skippedFiles = [];
+    const timedOutFiles = [];
+    const maxConcurrent = 5;
+    for (let i = 0; i < files.length; i += maxConcurrent) {
+        const batch = files.slice(i, i + maxConcurrent);
+        const results = await Promise.allSettled(batch.map(f => reviewFileWithRetry(f, apiUrl, apiKey, config.model, systemPrompt, timeoutMs, 2)));
+        for (let j = 0; j < results.length; j++) {
+            const r = results[j];
+            const file = batch[j];
+            if (r.status === 'fulfilled') {
+                allFindings.push(...r.value);
+            }
+            else {
+                const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+                if (msg.includes('aborted') || msg.includes('timed out')) {
+                    timedOutFiles.push(file.path);
+                    core.warning(`ai-review: timed out reviewing ${file.path}`);
+                }
+                else {
+                    skippedFiles.push(file.path);
+                    core.warning(`ai-review: skipped ${file.path} — ${msg}`);
+                }
+            }
+        }
+    }
+    return { findings: allFindings, skippedFiles, timedOutFiles };
+}
+//# sourceMappingURL=ai-review.js.map
+
+/***/ }),
+
 /***/ 1445:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -203,32 +505,37 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.upsertComment = upsertComment;
 const core = __importStar(__nccwpck_require__(6966));
 const comment_formatter_1 = __nccwpck_require__(6182);
-async function upsertComment(octokit, owner, repo, pullNumber, body) {
-    const marker = (0, comment_formatter_1.getReportCommentMarker)();
-    const { data: comments } = await octokit.rest.issues.listComments({
-        owner,
-        repo,
-        issue_number: pullNumber,
-        per_page: 100,
-    });
-    const existing = comments.find(c => c.body?.includes(marker));
-    if (existing) {
-        await octokit.rest.issues.updateComment({
-            owner,
-            repo,
-            comment_id: existing.id,
-            body,
-        });
-        core.info(`Updated existing ripple comment #${existing.id}`);
-    }
-    else {
-        await octokit.rest.issues.createComment({
+const ai_review_formatter_1 = __nccwpck_require__(1542);
+const MARKERS = {
+    ripple: (0, comment_formatter_1.getReportCommentMarker)(),
+    'ai-review': ai_review_formatter_1.AI_REVIEW_MARKER,
+};
+async function upsertComment(octokit, owner, repo, pullNumber, body, label = 'ripple') {
+    const marker = MARKERS[label];
+    let existing;
+    let page = 1;
+    while (!existing) {
+        const { data } = await octokit.rest.issues.listComments({
             owner,
             repo,
             issue_number: pullNumber,
-            body,
+            per_page: 100,
+            page,
         });
-        core.info('Created ripple comment');
+        if (data.length === 0)
+            break;
+        existing = data.find(c => c.body?.includes(marker));
+        if (data.length < 100)
+            break;
+        page++;
+    }
+    if (existing) {
+        await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+        core.info(`Updated existing ${label} comment #${existing.id}`);
+    }
+    else {
+        await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body });
+        core.info(`Created ${label} comment`);
     }
 }
 //# sourceMappingURL=comment.js.map
@@ -314,6 +621,56 @@ function getSourceFiles(files) {
 
 /***/ }),
 
+/***/ 5770:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.splitFiles = splitFiles;
+exports.checkPrMinLines = checkPrMinLines;
+const micromatch_1 = __importDefault(__nccwpck_require__(3095));
+function splitFiles(files, config, impactedPaths) {
+    let candidates;
+    if (impactedPaths !== null) {
+        const impactedSet = new Set(impactedPaths);
+        candidates = files.filter(f => impactedSet.has(f.path));
+    }
+    else {
+        candidates = files;
+    }
+    candidates = candidates.filter(f => f.status !== 'removed' && f.patch);
+    if (config.skipPatterns.length > 0) {
+        candidates = candidates.filter(f => !micromatch_1.default.isMatch(f.path, config.skipPatterns));
+    }
+    const result = [];
+    for (const f of candidates) {
+        const diff = f.patch ?? '';
+        const lineCount = diff.split('\n').filter(l => l.startsWith('+') || l.startsWith('-')).length;
+        if (lineCount < config.minFileDiffLines)
+            continue;
+        result.push({
+            path: f.path,
+            diff: diff.slice(0, config.maxFileTokens),
+            lineCount,
+        });
+    }
+    return result;
+}
+function checkPrMinLines(files, config) {
+    const total = files.reduce((sum, f) => {
+        const lines = (f.patch ?? '').split('\n').filter(l => l.startsWith('+') || l.startsWith('-')).length;
+        return sum + lines;
+    }, 0);
+    return total >= config.minPrDiffLines;
+}
+//# sourceMappingURL=file-splitter.js.map
+
+/***/ }),
+
 /***/ 4121:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -378,6 +735,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(6966));
 const github = __importStar(__nccwpck_require__(4903));
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const yaml = __importStar(__nccwpck_require__(3313));
 const diff_1 = __nccwpck_require__(1289);
 const track_a_1 = __nccwpck_require__(9917);
 const track_b_1 = __nccwpck_require__(2148);
@@ -390,6 +750,9 @@ const comment_formatter_1 = __nccwpck_require__(6182);
 const comment_1 = __nccwpck_require__(2661);
 const review_requester_1 = __nccwpck_require__(1189);
 const bot_detect_1 = __nccwpck_require__(1445);
+const file_splitter_1 = __nccwpck_require__(5770);
+const ai_review_1 = __nccwpck_require__(2645);
+const ai_review_formatter_1 = __nccwpck_require__(1542);
 function getInputs() {
     return {
         githubToken: core.getInput('github-token', { required: true }),
@@ -401,6 +764,78 @@ function getInputs() {
         botPatterns: (core.getInput('bot-patterns') || '')
             .split(',').map(p => p.trim()).filter(Boolean),
     };
+}
+function loadAiReviewConfig(repoRoot) {
+    const configPath = path.join(repoRoot, '.ripple.yml');
+    if (!fs.existsSync(configPath))
+        return null;
+    let raw;
+    try {
+        raw = yaml.load(fs.readFileSync(configPath, 'utf8')) ?? {};
+    }
+    catch {
+        return null;
+    }
+    const aiReview = raw['ai-review'];
+    if (!aiReview || aiReview['enabled'] !== true)
+        return null;
+    const apiUrl = String(aiReview['api-url'] ?? '');
+    const model = String(aiReview['model'] ?? '');
+    if (!apiUrl || !model) {
+        core.warning('ai-review: api-url and model are required in .ripple.yml — skipping ai-review');
+        return null;
+    }
+    const hasOwnerRouting = Boolean(raw['paths'] && typeof raw['paths'] === 'object' && Object.keys(raw['paths']).length > 0);
+    const config = {
+        enabled: true,
+        apiUrl,
+        model,
+        focus: String(aiReview['focus'] ?? 'logical-errors,error-handling').split(',').map(s => s.trim()),
+        skipPatterns: String(aiReview['skip-patterns'] ?? '').split(',').map(s => s.trim()).filter(Boolean),
+        skipLabel: String(aiReview['skip-label'] ?? 'skip-ai-review'),
+        minFileDiffLines: Number(aiReview['min-file-diff-lines'] ?? 1),
+        minPrDiffLines: Number(aiReview['min-pr-diff-lines'] ?? 1),
+        maxFileTokens: Number(aiReview['max-file-tokens'] ?? 32000),
+        timeoutSeconds: Number(aiReview['timeout-seconds'] ?? 30),
+        allowPrivateNetworks: aiReview['allow-private-networks'] === true,
+        postAsComment: aiReview['post-as-comment'] !== false,
+    };
+    return { config, hasOwnerRouting };
+}
+async function runAiReviewPipeline(octokit, owner, repo, pullNumber, allChanged, allImpacted, config, apiKey, commitSha, hasOwnerRouting, prLabels) {
+    if (prLabels.includes(config.skipLabel)) {
+        core.info(`ai-review: skipping — PR has label "${config.skipLabel}"`);
+        return;
+    }
+    if (!(0, file_splitter_1.checkPrMinLines)(allChanged, config)) {
+        core.info('ai-review: skipping — PR has fewer changed lines than min-pr-diff-lines');
+        return;
+    }
+    const impactedPaths = hasOwnerRouting ? allImpacted.map(f => f.path) : null;
+    const fileDiffs = (0, file_splitter_1.splitFiles)(allChanged, config, impactedPaths);
+    if (fileDiffs.length === 0) {
+        core.info('ai-review: no files to review after filtering');
+        return;
+    }
+    core.info(`ai-review: reviewing ${fileDiffs.length} file(s)`);
+    if (config.postAsComment) {
+        const statusBody = `${ai_review_formatter_1.AI_REVIEW_MARKER}\n## AI Review\n\n> Reviewing ${fileDiffs.length} file${fileDiffs.length === 1 ? '' : 's'}...`;
+        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, statusBody, 'ai-review');
+    }
+    const { findings, skippedFiles, timedOutFiles } = await (0, ai_review_1.runAiReview)({
+        config,
+        apiKey,
+        files: fileDiffs,
+        commitSha,
+    });
+    const filesReviewed = fileDiffs.length - skippedFiles.length - timedOutFiles.length;
+    const commentBody = (0, ai_review_formatter_1.formatAiReview)(findings, config.model, commitSha, filesReviewed, skippedFiles, timedOutFiles);
+    if (config.postAsComment) {
+        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody, 'ai-review');
+    }
+    else {
+        core.info(commentBody);
+    }
 }
 async function run() {
     const startTime = Date.now();
@@ -417,7 +852,9 @@ async function run() {
         const pullNumber = pr.number;
         const prAuthor = pr.user.login;
         const baseBranch = pr.base.ref;
+        const commitSha = pr.head.sha;
         const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
+        const prLabels = (pr.labels ?? []).map(l => l.name);
         core.info(`Ripple: PR #${pullNumber} by @${prAuthor} → ${baseBranch}`);
         // 1. Fetch diff
         const allChanged = await (0, diff_1.getChangedFiles)(octokit, owner, repo, pullNumber);
@@ -468,12 +905,23 @@ async function run() {
         };
         core.info(`Ripple complete: ${report.impactedFiles.length} impacted files, ` +
             `${report.owners.length} owners, ${report.runtimeMs}ms`);
-        // 11. Post comment
+        // 11. Post Ripple comment
         const commentBody = (0, comment_formatter_1.formatReport)(report);
         await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody);
         // 12. Request reviews in gate mode
         if (!advisoryMode) {
             await (0, review_requester_1.requestReviews)(octokit, owner, repo, pullNumber, safety.owners);
+        }
+        // 13. AI Review (if enabled in .ripple.yml)
+        const aiReview = loadAiReviewConfig(repoRoot);
+        const aiApiKey = core.getInput('ai-api-key');
+        if (aiReview) {
+            if (!aiApiKey) {
+                core.warning('ai-review is enabled in .ripple.yml but ai-api-key input is not set — skipping');
+            }
+            else {
+                await runAiReviewPipeline(octokit, owner, repo, pullNumber, allChanged, allImpacted, aiReview.config, aiApiKey, commitSha, aiReview.hasOwnerRouting, prLabels);
+            }
         }
     }
     catch (err) {
@@ -867,6 +1315,36 @@ async function filesWithMatches(pattern, repoRoot, wordBoundary = false) {
     return code > 1 ? [] : paths;
 }
 //# sourceMappingURL=ripgrep.js.map
+
+/***/ }),
+
+/***/ 9268:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sanitizeDiff = sanitizeDiff;
+const SECRET_PATTERNS = [
+    /AKIA[0-9A-Z]{16}/g,
+    /gh[pos]_[A-Za-z0-9_]{36,}/g,
+    /Bearer\s+[A-Za-z0-9\-._~+\/]+=*/g,
+    /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END [\w ]*PRIVATE KEY-----/g,
+    /(?:api[-_]?key|api[-_]?secret|access[-_]?token|client[-_]?secret)\s*[=:]\s*["']?[A-Za-z0-9_\-]{16,}["']?/gi,
+    /(?:password|passwd|pwd)\s*[=:]\s*["'][^"']{8,}["']/gi,
+];
+function sanitizeDiff(diff) {
+    let result = diff;
+    let count = 0;
+    for (const pattern of SECRET_PATTERNS) {
+        result = result.replace(pattern, () => {
+            count++;
+            return '[REDACTED]';
+        });
+    }
+    return { sanitized: result, redactedCount: count };
+}
+//# sourceMappingURL=secret-sanitizer.js.map
 
 /***/ }),
 
