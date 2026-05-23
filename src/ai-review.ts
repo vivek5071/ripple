@@ -93,6 +93,49 @@ function buildSystemPrompt(focusList: string[]): string {
   ].join('\n')
 }
 
+type ResponseFormatMode = 'json_schema' | 'json_object' | 'none'
+
+async function callLlmWithFormat(
+  apiUrl: string,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  timeoutMs: number,
+  mode: ResponseFormatMode
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+  }
+
+  if (mode === 'json_schema') {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
+    }
+  } else if (mode === 'json_object') {
+    body.response_format = { type: 'json_object' }
+  }
+
+  try {
+    return await fetch(`${apiUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function callLlm(
   apiUrl: string,
   apiKey: string,
@@ -101,44 +144,25 @@ async function callLlm(
   userContent: string,
   timeoutMs: number
 ): Promise<string> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const modes: ResponseFormatMode[] = ['json_schema', 'json_object', 'none']
 
-  let response: Response
-  try {
-    response = await fetch(`${apiUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
-        },
-      }),
-      signal: controller.signal,
-    })
-  } finally {
-    clearTimeout(timer)
+  let response: Response | undefined
+  for (const mode of modes) {
+    response = await callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode)
+    if (response.status !== 400 && response.status !== 422) break
+    core.info(`ai-review: provider rejected response_format mode "${mode}", trying next`)
   }
 
-  if (response.status === 401) throw new Error('ai-review: API key invalid (401)')
-  if (response.status === 403) {
+  if (response!.status === 401) throw new Error('ai-review: API key invalid (401)')
+  if (response!.status === 403) {
     throw new Error(
       'ai-review: API access forbidden (403). Check API key permissions or Azure RBAC role.'
     )
   }
-  if (response.status === 429) throw new Error('ai-review: rate limited (429)')
-  if (!response.ok) throw new Error(`ai-review: LLM request failed with status ${response.status}`)
+  if (response!.status === 429) throw new Error('ai-review: rate limited (429)')
+  if (!response!.ok) throw new Error(`ai-review: LLM request failed with status ${response!.status}`)
 
-  const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+  const data = await response!.json() as { choices?: Array<{ message?: { content?: string } }> }
   return data.choices?.[0]?.message?.content ?? ''
 }
 

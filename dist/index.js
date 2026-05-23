@@ -178,33 +178,45 @@ function buildSystemPrompt(focusList) {
         'Only report issues visible in the diff. Do not speculate beyond the shown code.',
     ].join('\n');
 }
-async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs) {
+async function callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response;
+    const body = {
+        model,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+        ],
+    };
+    if (mode === 'json_schema') {
+        body.response_format = {
+            type: 'json_schema',
+            json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
+        };
+    }
+    else if (mode === 'json_object') {
+        body.response_format = { type: 'json_object' };
+    }
     try {
-        response = await fetch(`${apiUrl}/v1/chat/completions`, {
+        return await fetch(`${apiUrl}/v1/chat/completions`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userContent },
-                ],
-                response_format: {
-                    type: 'json_schema',
-                    json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
-                },
-            }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify(body),
             signal: controller.signal,
         });
     }
     finally {
         clearTimeout(timer);
+    }
+}
+async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs) {
+    const modes = ['json_schema', 'json_object', 'none'];
+    let response;
+    for (const mode of modes) {
+        response = await callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode);
+        if (response.status !== 400 && response.status !== 422)
+            break;
+        core.info(`ai-review: provider rejected response_format mode "${mode}", trying next`);
     }
     if (response.status === 401)
         throw new Error('ai-review: API key invalid (401)');
