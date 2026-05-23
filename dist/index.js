@@ -1,6 +1,1785 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
+/***/ 1542:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AI_REVIEW_MARKER = void 0;
+exports.formatAiReview = formatAiReview;
+exports.AI_REVIEW_MARKER = '<!-- ai-review-report v1 -->';
+const CATEGORY_LABEL = {
+    'logical-error': 'Logical error',
+    'error-handling': 'Missing error handling',
+    'security': 'Security issue',
+    'broken-assumption': 'Broken assumption',
+};
+function formatAiReview(findings, model, commitSha, filesReviewed, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd, inlinedCount = 0) {
+    const lines = [exports.AI_REVIEW_MARKER, '## AI Review', ''];
+    const realFindings = findings.filter(f => !f.raw);
+    const totalSkipped = skippedFiles.length + timedOutFiles.length;
+    lines.push(`> Model: ${model} · ${realFindings.length} issue${realFindings.length === 1 ? '' : 's'} found`);
+    lines.push('');
+    if (findings.length === 0) {
+        lines.push('No issues found.');
+        lines.push('');
+    }
+    else {
+        for (const finding of findings) {
+            if (finding.raw) {
+                lines.push(`### ⚠ Unstructured review — \`${finding.file}\``);
+                lines.push(finding.raw);
+            }
+            else {
+                const label = CATEGORY_LABEL[finding.category] ?? finding.category;
+                const loc = finding.line ? `${finding.file}:${finding.line}` : finding.file;
+                lines.push(`### ⚠ ${label} — \`${loc}\``);
+                lines.push(finding.description);
+                if (finding.impact)
+                    lines.push(`**Impact:** ${finding.impact}`);
+                if (finding.fix)
+                    lines.push(`**Fix:** ${finding.fix}`);
+            }
+            lines.push('');
+        }
+    }
+    lines.push('---');
+    const footerParts = [
+        'Advisory',
+        `Last evaluated: ${commitSha.slice(0, 7)}`,
+        `${filesReviewed} file${filesReviewed === 1 ? '' : 's'} reviewed`,
+    ];
+    if (inlinedCount > 0)
+        footerParts.push(`${inlinedCount} inline`);
+    if (totalSkipped > 0)
+        footerParts.push(`${totalSkipped} skipped`);
+    if (budgetExceededFiles.length > 0)
+        footerParts.push(`${budgetExceededFiles.length} over budget`);
+    if (totalCostUsd > 0)
+        footerParts.push(`~$${totalCostUsd.toFixed(4)}`);
+    lines.push(`> ${footerParts.join(' · ')}`);
+    return lines.join('\n');
+}
+//# sourceMappingURL=ai-review-formatter.js.map
+
+/***/ }),
+
+/***/ 2645:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.validateApiUrl = validateApiUrl;
+exports.runAiReview = runAiReview;
+const core = __importStar(__nccwpck_require__(6966));
+const secret_sanitizer_1 = __nccwpck_require__(9268);
+// Cost per 1M tokens [input, output]. Unknown models use the conservative fallback.
+const MODEL_PRICING = {
+    'gpt-4o': [2.50, 10.00],
+    'gpt-4o-mini': [0.15, 0.60],
+    'gpt-4-turbo': [10.00, 30.00],
+    'llama-3.3-70b-versatile': [0.59, 0.79],
+    'llama-3.1-70b-versatile': [0.59, 0.79],
+    'mixtral-8x7b-32768': [0.24, 0.24],
+};
+const FALLBACK_PRICING = [5.00, 15.00];
+function estimateCost(model, promptTokens, completionTokens) {
+    const [inputPer1M, outputPer1M] = MODEL_PRICING[model] ?? FALLBACK_PRICING;
+    return (promptTokens / 1_000_000) * inputPer1M + (completionTokens / 1_000_000) * outputPer1M;
+}
+const FOCUS_MAP = {
+    'logical-errors': 'logical errors and incorrect behavior',
+    'security': 'security vulnerabilities, injection risks, and exposed secrets',
+    'error-handling': 'missing or inadequate error handling and silent failure paths',
+    'broken-assumptions': 'broken assumptions about input shape, API contracts, and state',
+    'all': 'all of the above',
+};
+const FINDING_SCHEMA = {
+    type: 'object',
+    required: ['findings'],
+    properties: {
+        findings: {
+            type: 'array',
+            items: {
+                type: 'object',
+                required: ['file', 'category', 'description', 'impact', 'fix'],
+                properties: {
+                    file: { type: 'string' },
+                    line: { type: ['integer', 'null'] },
+                    category: {
+                        type: 'string',
+                        enum: ['logical-error', 'error-handling', 'security', 'broken-assumption'],
+                    },
+                    description: { type: 'string' },
+                    impact: { type: 'string' },
+                    fix: { type: 'string' },
+                },
+            },
+        },
+    },
+};
+function validateApiUrl(rawUrl, allowPrivateNetworks) {
+    let url = rawUrl.replace(/\/+$/, '');
+    if (url.endsWith('/v1')) {
+        core.warning('ai-review: api-url should not include /v1 — stripping automatically');
+        url = url.slice(0, -3);
+    }
+    let parsed;
+    try {
+        parsed = new URL(url);
+    }
+    catch {
+        throw new Error(`ai-review: invalid api-url "${rawUrl}"`);
+    }
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.protocol === 'http:' && !isLocalhost) {
+        throw new Error('ai-review: api-url must use https. Use https:// or http://localhost for local testing.');
+    }
+    if (!allowPrivateNetworks && !isLocalhost) {
+        const h = parsed.hostname;
+        const isPrivate = /^10\./.test(h) ||
+            /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h) ||
+            /^192\.168\./.test(h) ||
+            /^169\.254\./.test(h);
+        if (isPrivate) {
+            throw new Error(`ai-review: api-url points to a private IP (${h}). ` +
+                `Set allow-private-networks: true in .ripple.yml for Ollama/vLLM on a private LAN.`);
+        }
+    }
+    return url;
+}
+function buildSystemPrompt(focusList) {
+    const areas = focusList.includes('all')
+        ? FOCUS_MAP['all']
+        : focusList.map(f => FOCUS_MAP[f] ?? f).join('; ');
+    return [
+        'You are a senior engineer reviewing a pull request diff.',
+        'Identify only concrete, actionable issues. Do not praise. Do not summarize.',
+        `Focus: ${areas}.`,
+        '',
+        'For each issue respond with JSON matching the FindingSchema.',
+        'If no issues found, return an empty findings array.',
+        'Only report issues visible in the diff. Do not speculate beyond the shown code.',
+    ].join('\n');
+}
+async function callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const body = {
+        model,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+        ],
+    };
+    if (mode === 'json_schema') {
+        body.response_format = {
+            type: 'json_schema',
+            json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
+        };
+    }
+    else if (mode === 'json_object') {
+        body.response_format = { type: 'json_object' };
+    }
+    try {
+        return await fetch(`${apiUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
+async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs) {
+    const modes = ['json_schema', 'json_object', 'none'];
+    let response;
+    for (const mode of modes) {
+        response = await callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode);
+        if (response.status !== 400 && response.status !== 422)
+            break;
+        core.info(`ai-review: provider rejected response_format mode "${mode}", trying next`);
+    }
+    if (response.status === 401)
+        throw new Error('ai-review: API key invalid (401)');
+    if (response.status === 403) {
+        throw new Error('ai-review: API access forbidden (403). Check API key permissions or Azure RBAC role.');
+    }
+    if (response.status === 429)
+        throw new Error('ai-review: rate limited (429)');
+    if (!response.ok)
+        throw new Error(`ai-review: LLM request failed with status ${response.status}`);
+    const data = await response.json();
+    return {
+        content: data.choices?.[0]?.message?.content ?? '',
+        promptTokens: data.usage?.prompt_tokens ?? 0,
+        completionTokens: data.usage?.completion_tokens ?? 0,
+    };
+}
+function parseFindings(content, filePath) {
+    try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed.findings)) {
+            return parsed.findings.map((f) => ({
+                file: typeof f.file === 'string' ? f.file : filePath,
+                line: typeof f.line === 'number' ? f.line : null,
+                category: f.category ?? 'logical-error',
+                description: String(f.description ?? ''),
+                impact: String(f.impact ?? ''),
+                fix: String(f.fix ?? ''),
+            }));
+        }
+    }
+    catch { /* fall through to prose fallback */ }
+    if (content.trim().length > 0) {
+        return [{ file: filePath, line: null, category: 'logical-error', description: '', impact: '', fix: '', raw: content }];
+    }
+    return [];
+}
+async function reviewFileWithRetry(file, apiUrl, apiKey, model, systemPrompt, timeoutMs, retryLimit) {
+    const { sanitized, redactedCount } = (0, secret_sanitizer_1.sanitizeDiff)(file.diff);
+    if (redactedCount > 0) {
+        core.info(`ai-review: redacted ${redactedCount} potential secret(s) in ${file.path}`);
+    }
+    const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\``;
+    core.info(`ai-review: reviewing ${file.path} (~${file.lineCount} changed lines)`);
+    let lastErr;
+    for (let attempt = 0; attempt <= retryLimit; attempt++) {
+        if (attempt > 0) {
+            await new Promise(r => setTimeout(r, 2 ** attempt * 1000));
+            core.info(`ai-review: retrying ${file.path} (attempt ${attempt + 1})`);
+        }
+        try {
+            const { content, promptTokens, completionTokens } = await callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs);
+            const costUsd = estimateCost(model, promptTokens, completionTokens);
+            if (!content)
+                return { findings: [], costUsd };
+            return { findings: parseFindings(content, file.path), costUsd };
+        }
+        catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (!lastErr.message.includes('429') && !lastErr.message.includes('aborted'))
+                break;
+        }
+    }
+    throw lastErr ?? new Error('ai-review: unknown error');
+}
+async function runAiReview(options) {
+    const { config, apiKey, files } = options;
+    const apiUrl = validateApiUrl(config.apiUrl, config.allowPrivateNetworks);
+    const systemPrompt = buildSystemPrompt(config.focus);
+    const timeoutMs = config.timeoutSeconds * 1000;
+    core.setSecret(apiKey);
+    const allFindings = [];
+    const skippedFiles = [];
+    const timedOutFiles = [];
+    const budgetExceededFiles = [];
+    let totalCostUsd = 0;
+    const maxConcurrent = 5;
+    for (let i = 0; i < files.length; i += maxConcurrent) {
+        if (config.budgetUsd > 0 && totalCostUsd >= config.budgetUsd) {
+            const remaining = files.slice(i).map(f => f.path);
+            budgetExceededFiles.push(...remaining);
+            core.warning(`ai-review: budget cap $${config.budgetUsd} reached — skipping ${remaining.length} file(s)`);
+            break;
+        }
+        const batch = files.slice(i, i + maxConcurrent);
+        const results = await Promise.allSettled(batch.map(f => reviewFileWithRetry(f, apiUrl, apiKey, config.model, systemPrompt, timeoutMs, 2)));
+        for (let j = 0; j < results.length; j++) {
+            const r = results[j];
+            const file = batch[j];
+            if (r.status === 'fulfilled') {
+                allFindings.push(...r.value.findings);
+                totalCostUsd += r.value.costUsd;
+            }
+            else {
+                const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+                if (msg.includes('aborted') || msg.includes('timed out')) {
+                    timedOutFiles.push(file.path);
+                    core.warning(`ai-review: timed out reviewing ${file.path}`);
+                }
+                else {
+                    skippedFiles.push(file.path);
+                    core.warning(`ai-review: skipped ${file.path} — ${msg}`);
+                }
+            }
+        }
+    }
+    return { findings: allFindings, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd };
+}
+//# sourceMappingURL=ai-review.js.map
+
+/***/ }),
+
+/***/ 1445:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isBotAuthor = isBotAuthor;
+const micromatch_1 = __importDefault(__nccwpck_require__(3095));
+function isBotAuthor(handle, extraPatterns) {
+    // GitHub App convention: all App-based bots end with the literal suffix [bot]
+    if (handle.endsWith('[bot]'))
+        return true;
+    // User-supplied patterns for bots that skip the [bot] convention (e.g. 'renovate', 'devin-ai')
+    return extraPatterns.length > 0 && micromatch_1.default.isMatch(handle, extraPatterns, { nocase: true });
+}
+//# sourceMappingURL=bot-detect.js.map
+
+/***/ }),
+
+/***/ 7339:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isBranchProtected = isBranchProtected;
+const core = __importStar(__nccwpck_require__(6966));
+async function isBranchProtected(octokit, owner, repo, branch) {
+    try {
+        await octokit.rest.repos.getBranchProtection({ owner, repo, branch });
+        return true;
+    }
+    catch (err) {
+        const status = err.status;
+        if (status === 404)
+            return false; // no protection rules configured
+        if (status === 403)
+            return false; // no admin permission — treat as unprotected
+        core.warning(`Branch protection check failed: ${err instanceof Error ? err.message : String(err)}`);
+        return true; // assume protected on network/auth errors to avoid false banners
+    }
+}
+//# sourceMappingURL=branch-check.js.map
+
+/***/ }),
+
+/***/ 6182:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getReportCommentMarker = getReportCommentMarker;
+exports.formatReport = formatReport;
+const MARKER = '<!-- ripple-report -->';
+function getReportCommentMarker() {
+    return MARKER;
+}
+function formatReport(report) {
+    const lines = [MARKER, '## Ripple Report', ''];
+    const modeLabel = report.advisoryMode ? 'advisory mode' : 'gate mode';
+    lines.push(`> Scanned **${report.filesSearched.toLocaleString()}** files in ${report.runtimeMs}ms · ${modeLabel}`);
+    lines.push('');
+    if (report.impactedFiles.length === 0) {
+        lines.push('No downstream impact detected.');
+        return appendFooter(lines, report);
+    }
+    // Owner sections
+    if (report.owners.length > 0) {
+        lines.push(`### Owners to notify (${report.owners.length})`);
+        lines.push('');
+        for (const owner of report.owners) {
+            const count = owner.files.length;
+            lines.push(`**@${owner.handle}** — ${count} file${count !== 1 ? 's' : ''}`);
+            for (const f of owner.files)
+                lines.push(`- \`${f}\``);
+            lines.push('');
+        }
+    }
+    // Unresolved files
+    if (report.unresolvedFiles.length > 0) {
+        lines.push('### Files with no owner');
+        lines.push('');
+        lines.push('Add these paths to `.ripple.yml` so future PRs are routed automatically:');
+        lines.push('');
+        lines.push('```yaml');
+        lines.push('paths:');
+        for (const f of report.unresolvedFiles)
+            lines.push(`  '${f}': your-handle`);
+        lines.push('```');
+        lines.push('');
+    }
+    return appendFooter(lines, report);
+}
+function appendFooter(lines, report) {
+    const footers = [];
+    if (report.ownerCapHit) {
+        const prefix = report.botAuthor ? '**Bot PR** — owner cap hit; ' : '';
+        footers.push(`> ${prefix}Too many unique owners to route reviews automatically. ` +
+            'Increase `max-owners-per-pr` or consolidate ownership in `.ripple.yml`.');
+    }
+    else if (report.botAuthor && !report.advisoryMode) {
+        footers.push(`> **Bot PR** — gate mode auto-applied because @${report.prAuthor} is a bot. ` +
+            'All impacted file owners must approve before merge.');
+    }
+    else if (report.advisoryMode) {
+        footers.push('> Running in **advisory mode** — this report is informational only. ' +
+            'Set `mode: gate` to require owner approvals before merge.');
+    }
+    if (!report.branchProtectionConfigured) {
+        footers.push('> **Setup required:** Branch protection is not configured on this branch. ' +
+            'Without it, gate mode cannot block merges. ' +
+            'Go to **Settings → Branches → Branch protection rules** and add a required status check.');
+    }
+    if (footers.length > 0) {
+        lines.push('---');
+        lines.push(...footers);
+    }
+    return lines.join('\n');
+}
+//# sourceMappingURL=comment-formatter.js.map
+
+/***/ }),
+
+/***/ 2661:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.upsertComment = upsertComment;
+const core = __importStar(__nccwpck_require__(6966));
+const comment_formatter_1 = __nccwpck_require__(6182);
+const ai_review_formatter_1 = __nccwpck_require__(1542);
+const MARKERS = {
+    ripple: (0, comment_formatter_1.getReportCommentMarker)(),
+    'ai-review': ai_review_formatter_1.AI_REVIEW_MARKER,
+};
+async function upsertComment(octokit, owner, repo, pullNumber, body, label = 'ripple') {
+    const marker = MARKERS[label];
+    let existing;
+    let page = 1;
+    while (!existing) {
+        const { data } = await octokit.rest.issues.listComments({
+            owner,
+            repo,
+            issue_number: pullNumber,
+            per_page: 100,
+            page,
+        });
+        if (data.length === 0)
+            break;
+        existing = data.find(c => c.body?.includes(marker));
+        if (data.length < 100)
+            break;
+        page++;
+    }
+    if (existing) {
+        await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+        core.info(`Updated existing ${label} comment #${existing.id}`);
+    }
+    else {
+        await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body });
+        core.info(`Created ${label} comment`);
+    }
+}
+//# sourceMappingURL=comment.js.map
+
+/***/ }),
+
+/***/ 1289:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getChangedFiles = getChangedFiles;
+exports.getSourceFiles = getSourceFiles;
+const core = __importStar(__nccwpck_require__(6966));
+async function getChangedFiles(octokit, owner, repo, pullNumber) {
+    const files = [];
+    let page = 1;
+    while (true) {
+        const { data } = await octokit.rest.pulls.listFiles({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            per_page: 100,
+            page,
+        });
+        if (data.length === 0)
+            break;
+        for (const f of data) {
+            const status = f.status;
+            files.push({
+                path: f.filename,
+                status,
+                previousPath: f.previous_filename,
+                patch: f.patch,
+            });
+        }
+        if (data.length < 100)
+            break;
+        page++;
+    }
+    core.info(`Diff: ${files.length} changed files`);
+    return files;
+}
+function getSourceFiles(files) {
+    const ignored = /\.(md|txt|lock|sum|png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz)$/i;
+    return files.filter(f => f.status !== 'removed' && !ignored.test(f.path));
+}
+//# sourceMappingURL=diff.js.map
+
+/***/ }),
+
+/***/ 5770:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.splitFiles = splitFiles;
+exports.checkPrMinLines = checkPrMinLines;
+const micromatch_1 = __importDefault(__nccwpck_require__(3095));
+function splitFiles(files, config, impactedPaths) {
+    let candidates;
+    if (impactedPaths !== null) {
+        const impactedSet = new Set(impactedPaths);
+        candidates = files.filter(f => impactedSet.has(f.path));
+    }
+    else {
+        candidates = files;
+    }
+    candidates = candidates.filter(f => f.status !== 'removed' && f.patch);
+    if (config.includePatterns.length > 0) {
+        candidates = candidates.filter(f => micromatch_1.default.isMatch(f.path, config.includePatterns));
+    }
+    if (config.skipPatterns.length > 0) {
+        candidates = candidates.filter(f => !micromatch_1.default.isMatch(f.path, config.skipPatterns));
+    }
+    const result = [];
+    for (const f of candidates) {
+        const diff = f.patch ?? '';
+        const lineCount = diff.split('\n').filter(l => l.startsWith('+') || l.startsWith('-')).length;
+        if (lineCount < config.minFileDiffLines)
+            continue;
+        result.push({
+            path: f.path,
+            diff: diff.slice(0, config.maxFileTokens),
+            lineCount,
+        });
+    }
+    return result;
+}
+function checkPrMinLines(files, config) {
+    const total = files.reduce((sum, f) => {
+        const lines = (f.patch ?? '').split('\n').filter(l => l.startsWith('+') || l.startsWith('-')).length;
+        return sum + lines;
+    }, 0);
+    return total >= config.minPrDiffLines;
+}
+//# sourceMappingURL=file-splitter.js.map
+
+/***/ }),
+
+/***/ 4121:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.emailToHandle = emailToHandle;
+async function emailToHandle(email, octokit) {
+    try {
+        const { data } = await octokit.rest.search.users({
+            q: `${email} in:email`,
+            per_page: 1,
+        });
+        return data.items[0]?.login;
+    }
+    catch {
+        return undefined;
+    }
+}
+//# sourceMappingURL=github-user.js.map
+
+/***/ }),
+
+/***/ 5836:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const core = __importStar(__nccwpck_require__(6966));
+const github = __importStar(__nccwpck_require__(4903));
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const yaml = __importStar(__nccwpck_require__(3313));
+const diff_1 = __nccwpck_require__(1289);
+const track_a_1 = __nccwpck_require__(9917);
+const track_b_1 = __nccwpck_require__(2148);
+const rename_detect_1 = __nccwpck_require__(5786);
+const symbol_extract_1 = __nccwpck_require__(1762);
+const owner_resolver_1 = __nccwpck_require__(3250);
+const owner_safety_1 = __nccwpck_require__(2538);
+const branch_check_1 = __nccwpck_require__(7339);
+const comment_formatter_1 = __nccwpck_require__(6182);
+const comment_1 = __nccwpck_require__(2661);
+const review_requester_1 = __nccwpck_require__(1189);
+const bot_detect_1 = __nccwpck_require__(1445);
+const file_splitter_1 = __nccwpck_require__(5770);
+const ai_review_1 = __nccwpck_require__(2645);
+const ai_review_formatter_1 = __nccwpck_require__(1542);
+const inline_review_1 = __nccwpck_require__(3572);
+function getInputs() {
+    return {
+        githubToken: core.getInput('github-token', { required: true }),
+        mode: (core.getInput('mode') || 'advisory'),
+        minSymbolLength: parseInt(core.getInput('min-symbol-length') || '5', 10),
+        maxFilesToSearch: parseInt(core.getInput('max-files-to-search') || '50000', 10),
+        maxOwnersPerPr: parseInt(core.getInput('max-owners-per-pr') || '10', 10),
+        teamLead: core.getInput('team-lead') || '',
+        botPatterns: (core.getInput('bot-patterns') || '')
+            .split(',').map(p => p.trim()).filter(Boolean),
+    };
+}
+function loadAiReviewConfig(repoRoot) {
+    const configPath = path.join(repoRoot, '.ripple.yml');
+    if (!fs.existsSync(configPath))
+        return null;
+    let raw;
+    try {
+        raw = yaml.load(fs.readFileSync(configPath, 'utf8')) ?? {};
+    }
+    catch {
+        return null;
+    }
+    const aiReview = raw['ai-review'];
+    if (!aiReview || aiReview['enabled'] !== true)
+        return null;
+    const apiUrl = String(aiReview['api-url'] ?? '');
+    const model = String(aiReview['model'] ?? '');
+    if (!apiUrl || !model) {
+        core.warning('ai-review: api-url and model are required in .ripple.yml — skipping ai-review');
+        return null;
+    }
+    const hasOwnerRouting = Boolean(raw['paths'] && typeof raw['paths'] === 'object' && Object.keys(raw['paths']).length > 0);
+    const config = {
+        enabled: true,
+        apiUrl,
+        model,
+        focus: String(aiReview['focus'] ?? 'logical-errors,error-handling').split(',').map(s => s.trim()),
+        skipPatterns: String(aiReview['skip-patterns'] ?? '').split(',').map(s => s.trim()).filter(Boolean),
+        includePatterns: String(aiReview['include-patterns'] ?? '').split(',').map(s => s.trim()).filter(Boolean),
+        skipLabel: String(aiReview['skip-label'] ?? 'skip-ai-review'),
+        minFileDiffLines: Number(aiReview['min-file-diff-lines'] ?? 1),
+        minPrDiffLines: Number(aiReview['min-pr-diff-lines'] ?? 1),
+        maxFileTokens: Number(aiReview['max-file-tokens'] ?? 32000),
+        timeoutSeconds: Number(aiReview['timeout-seconds'] ?? 30),
+        allowPrivateNetworks: aiReview['allow-private-networks'] === true,
+        postAsComment: aiReview['post-as-comment'] !== false,
+        inlineComments: aiReview['inline-comments'] === true,
+        budgetUsd: Number(aiReview['budget-usd'] ?? 0),
+    };
+    return { config, hasOwnerRouting };
+}
+async function runAiReviewPipeline(octokit, owner, repo, pullNumber, allChanged, config, apiKey, commitSha, hasOwnerRouting, prLabels) {
+    if (prLabels.includes(config.skipLabel)) {
+        core.info(`ai-review: skipping — PR has label "${config.skipLabel}"`);
+        return;
+    }
+    if (!(0, file_splitter_1.checkPrMinLines)(allChanged, config)) {
+        core.info('ai-review: skipping — PR has fewer changed lines than min-pr-diff-lines');
+        return;
+    }
+    // AI Review always operates on the PR's changed files, not the downstream
+    // impacted set. The impacted set tracks callers of the changed code —
+    // those are correct for owner routing but wrong for code review.
+    const fileDiffs = (0, file_splitter_1.splitFiles)(allChanged, config, null);
+    if (fileDiffs.length === 0) {
+        core.info('ai-review: no files to review after filtering');
+        return;
+    }
+    core.info(`ai-review: reviewing ${fileDiffs.length} file(s)`);
+    if (config.postAsComment) {
+        const statusBody = `${ai_review_formatter_1.AI_REVIEW_MARKER}\n## AI Review\n\n> Reviewing ${fileDiffs.length} file${fileDiffs.length === 1 ? '' : 's'}...`;
+        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, statusBody, 'ai-review');
+    }
+    const { findings, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd } = await (0, ai_review_1.runAiReview)({
+        config,
+        apiKey,
+        files: fileDiffs,
+        commitSha,
+    });
+    const filesReviewed = fileDiffs.length - skippedFiles.length - timedOutFiles.length - budgetExceededFiles.length;
+    let commentFindings = findings;
+    let inlinedCount = 0;
+    if (config.inlineComments) {
+        const { inlined, fallback } = await (0, inline_review_1.postInlineReview)(octokit, owner, repo, pullNumber, commitSha, findings, fileDiffs);
+        inlinedCount = inlined.length;
+        commentFindings = fallback;
+    }
+    const commentBody = (0, ai_review_formatter_1.formatAiReview)(commentFindings, config.model, commitSha, filesReviewed, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd, inlinedCount);
+    if (config.postAsComment) {
+        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody, 'ai-review');
+    }
+    else {
+        core.info(commentBody);
+    }
+}
+async function run() {
+    const startTime = Date.now();
+    try {
+        const inputs = getInputs();
+        const octokit = github.getOctokit(inputs.githubToken);
+        const ctx = github.context;
+        if (!ctx.payload.pull_request) {
+            core.info('Not a pull_request event — skipping');
+            return;
+        }
+        const pr = ctx.payload.pull_request;
+        const { owner, repo } = ctx.repo;
+        const pullNumber = pr.number;
+        const prAuthor = pr.user.login;
+        const baseBranch = pr.base.ref;
+        const commitSha = pr.head.sha;
+        const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
+        const prLabels = (pr.labels ?? []).map(l => l.name);
+        core.info(`Ripple: PR #${pullNumber} by @${prAuthor} → ${baseBranch}`);
+        // Detect fork PRs — GitHub gives read-only tokens for these on the default
+        // pull_request trigger. Ripple cannot post comments or request reviews.
+        const headRepoFullName = pr.head.repo?.full_name;
+        if (headRepoFullName && headRepoFullName !== `${owner}/${repo}`) {
+            core.warning(`Ripple: PR is from a fork (${headRepoFullName}). ` +
+                `GitHub does not grant write access for fork PRs on the pull_request trigger — ` +
+                `review requests and comments are unavailable. ` +
+                `See https://github.com/${owner}/${repo}#fork-pr-support for the two-workflow setup.`);
+            try {
+                const forkBody = [
+                    (0, comment_formatter_1.getReportCommentMarker)(),
+                    '## Ripple',
+                    '',
+                    '> ⚠ **Fork PR — limited functionality**',
+                    '>',
+                    `> This PR comes from a fork (\`${headRepoFullName}\`). GitHub does not grant write access`,
+                    '> for fork PRs on the default `pull_request` trigger, so Ripple cannot post review',
+                    '> findings or request reviewers.',
+                    '>',
+                    '> To enable full Ripple support on fork PRs, use the `pull_request_target` two-workflow',
+                    `> setup — see the [Ripple docs](https://github.com/${owner}/${repo}#fork-pr-support).`,
+                ].join('\n');
+                await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, forkBody);
+            }
+            catch {
+                core.info('Ripple: could not post fork warning (token is read-only) — check Actions log');
+            }
+            return;
+        }
+        // 1. Fetch diff
+        const allChanged = await (0, diff_1.getChangedFiles)(octokit, owner, repo, pullNumber);
+        const sourceFiles = (0, diff_1.getSourceFiles)(allChanged);
+        if (sourceFiles.length === 0) {
+            core.info('No source files changed — skipping');
+            return;
+        }
+        // 2. Detect renames (so Track B searches OLD name for renamed symbols)
+        const renamedFiles = (0, rename_detect_1.detectRenames)(sourceFiles);
+        // 3. Extract exported symbols from the diff (regex-based, no AST required)
+        const patchSymbols = (0, symbol_extract_1.extractChangedSymbols)(sourceFiles);
+        const renamedSymbols = await (0, rename_detect_1.getRenamedSymbolCallers)(renamedFiles, [], repoRoot);
+        const changedSymbols = [...patchSymbols, ...renamedSymbols];
+        core.info(`Symbols: ${patchSymbols.length} from patch, ${renamedSymbols.length} from renames`);
+        // 4. Track A — contract file detection
+        const trackAImpact = await (0, track_a_1.detectContractImpact)(sourceFiles, repoRoot, inputs.maxFilesToSearch);
+        // 5. Track B — symbol grep
+        const trackBResult = await (0, track_b_1.symbolGrep)(changedSymbols, repoRoot, inputs.minSymbolLength, inputs.maxFilesToSearch);
+        // 6. Merge and deduplicate impacted files
+        const allImpacted = [...trackAImpact, ...trackBResult.impactedFiles];
+        const impactedPaths = [...new Set(allImpacted.map(f => f.path))];
+        // 7. Resolve owners
+        const rawOwners = await (0, owner_resolver_1.resolveOwners)(impactedPaths, repoRoot, octokit);
+        // 8. Apply safety rules (author exclusion, team-lead fallback, cap)
+        const safety = (0, owner_safety_1.applyOwnerSafetyRules)(rawOwners, prAuthor, inputs.teamLead, inputs.maxOwnersPerPr);
+        const botPr = (0, bot_detect_1.isBotAuthor)(prAuthor, inputs.botPatterns);
+        if (botPr)
+            core.info(`Bot PR detected (@${prAuthor}) — forcing gate mode`);
+        // advisory when: owner cap hit, OR (not a bot PR AND configured as advisory)
+        const advisoryMode = safety.capHit || (!botPr && inputs.mode === 'advisory');
+        // 9. Branch protection check
+        const branchProtected = await (0, branch_check_1.isBranchProtected)(octokit, owner, repo, baseBranch);
+        // 10. Build report
+        const report = {
+            changedFiles: allChanged,
+            changedSymbols,
+            impactedFiles: allImpacted,
+            owners: safety.owners,
+            unresolvedFiles: impactedPaths.filter(p => !safety.owners.some(o => o.files.includes(p))),
+            prAuthor,
+            advisoryMode,
+            ownerCapHit: safety.capHit,
+            branchProtectionConfigured: branchProtected,
+            runtimeMs: Date.now() - startTime,
+            filesSearched: trackBResult.filesSearched,
+            botAuthor: botPr,
+        };
+        core.info(`Ripple complete: ${report.impactedFiles.length} impacted files, ` +
+            `${report.owners.length} owners, ${report.runtimeMs}ms`);
+        // 11. Post Ripple comment
+        const commentBody = (0, comment_formatter_1.formatReport)(report);
+        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody);
+        // 12. Request reviews in gate mode
+        if (!advisoryMode) {
+            await (0, review_requester_1.requestReviews)(octokit, owner, repo, pullNumber, safety.owners);
+        }
+        // 13. AI Review (if enabled in .ripple.yml)
+        const aiReview = loadAiReviewConfig(repoRoot);
+        const aiApiKey = core.getInput('ai-api-key');
+        if (aiReview) {
+            if (!aiApiKey) {
+                core.warning('ai-review is enabled in .ripple.yml but ai-api-key input is not set — skipping');
+            }
+            else {
+                await runAiReviewPipeline(octokit, owner, repo, pullNumber, allChanged, aiReview.config, aiApiKey, commitSha, aiReview.hasOwnerRouting, prLabels);
+            }
+        }
+    }
+    catch (err) {
+        core.setFailed(err instanceof Error ? err.message : String(err));
+    }
+}
+run();
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ 3572:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.postInlineReview = postInlineReview;
+const core = __importStar(__nccwpck_require__(6966));
+function getValidLines(patch) {
+    const valid = new Set();
+    const re = /@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/g;
+    let m;
+    while ((m = re.exec(patch)) !== null) {
+        const start = parseInt(m[1], 10);
+        const count = m[2] !== undefined ? parseInt(m[2], 10) : 1;
+        for (let i = start; i < start + count; i++)
+            valid.add(i);
+    }
+    return valid;
+}
+function formatInlineBody(f) {
+    const parts = [`**${f.category}**: ${f.description}`];
+    if (f.impact)
+        parts.push(`**Impact:** ${f.impact}`);
+    if (f.fix)
+        parts.push(`**Fix:** ${f.fix}`);
+    return parts.join('\n\n');
+}
+async function postInlineReview(octokit, owner, repo, pullNumber, commitSha, findings, fileDiffs) {
+    const validLinesByFile = new Map();
+    for (const fd of fileDiffs) {
+        validLinesByFile.set(fd.path, getValidLines(fd.diff));
+    }
+    const inlined = [];
+    const fallback = [];
+    const comments = [];
+    for (const f of findings) {
+        if (f.raw || f.line === null) {
+            fallback.push(f);
+            continue;
+        }
+        const validLines = validLinesByFile.get(f.file);
+        if (validLines?.has(f.line)) {
+            comments.push({ path: f.file, line: f.line, body: formatInlineBody(f) });
+            inlined.push(f);
+        }
+        else {
+            fallback.push(f);
+        }
+    }
+    if (comments.length > 0) {
+        try {
+            await octokit.rest.pulls.createReview({
+                owner,
+                repo,
+                pull_number: pullNumber,
+                commit_id: commitSha,
+                event: 'COMMENT',
+                comments,
+            });
+            core.info(`ai-review: posted ${comments.length} inline comment(s)`);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            core.warning(`ai-review: inline review failed (${msg}) — falling back to comment`);
+            fallback.push(...inlined.splice(0));
+        }
+    }
+    return { inlined, fallback };
+}
+//# sourceMappingURL=inline-review.js.map
+
+/***/ }),
+
+/***/ 3250:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveOwners = resolveOwners;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const exec = __importStar(__nccwpck_require__(2851));
+const core = __importStar(__nccwpck_require__(6966));
+const yaml = __importStar(__nccwpck_require__(3313));
+const micromatch_1 = __importDefault(__nccwpck_require__(3095));
+const github_user_1 = __nccwpck_require__(4121);
+function loadConfig(repoRoot) {
+    const configPath = path.join(repoRoot, '.ripple.yml');
+    if (!fs.existsSync(configPath))
+        return {};
+    try {
+        return yaml.load(fs.readFileSync(configPath, 'utf8')) ?? {};
+    }
+    catch {
+        core.warning('Failed to parse .ripple.yml — skipping YAML owner resolution');
+        return {};
+    }
+}
+function matchYaml(filePath, pathConfig) {
+    for (const [glob, owners] of Object.entries(pathConfig)) {
+        if (micromatch_1.default.isMatch(filePath, glob)) {
+            return Array.isArray(owners) ? owners : [owners];
+        }
+    }
+    return [];
+}
+async function gitBlameEmail(filePath, repoRoot) {
+    let out = '';
+    const code = await exec.exec('git', ['-C', repoRoot, 'log', '--format=%ae', '-1', '--', filePath], {
+        ignoreReturnCode: true,
+        silent: true,
+        listeners: { stdout: (d) => { out += d.toString(); } },
+    });
+    if (code !== 0)
+        return undefined;
+    const email = out.trim();
+    return email || undefined;
+}
+async function resolveOwners(impactedPaths, repoRoot, octokit) {
+    const config = loadConfig(repoRoot);
+    const pathConfig = config.paths ?? {};
+    // handle → { files, resolvedVia } — first-touch wins for resolvedVia
+    const handleFiles = new Map();
+    const handleVia = new Map();
+    const emailHandleCache = new Map();
+    function addOwner(handle, filePath, via) {
+        if (!handleVia.has(handle))
+            handleVia.set(handle, via);
+        const files = handleFiles.get(handle) ?? [];
+        files.push(filePath);
+        handleFiles.set(handle, files);
+    }
+    for (const filePath of impactedPaths) {
+        const handles = matchYaml(filePath, pathConfig);
+        if (handles.length > 0) {
+            for (const h of handles)
+                addOwner(h, filePath, 'yaml');
+            continue;
+        }
+        const email = await gitBlameEmail(filePath, repoRoot);
+        if (!email)
+            continue;
+        if (!emailHandleCache.has(email)) {
+            emailHandleCache.set(email, await (0, github_user_1.emailToHandle)(email, octokit));
+        }
+        const handle = emailHandleCache.get(email);
+        if (handle) {
+            addOwner(handle, filePath, 'git-blame');
+        }
+        // No handle found → file lands in unresolvedFiles (computed in index.ts)
+    }
+    return [...handleFiles.entries()].map(([handle, files]) => ({
+        handle,
+        files,
+        resolvedVia: handleVia.get(handle) ?? 'unresolved',
+    }));
+}
+//# sourceMappingURL=owner-resolver.js.map
+
+/***/ }),
+
+/***/ 2538:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.applyOwnerSafetyRules = applyOwnerSafetyRules;
+function applyOwnerSafetyRules(owners, prAuthor, teamLead, maxOwnersPerPr) {
+    // 1. Dedup: merge files for duplicate handles
+    const byHandle = new Map();
+    for (const owner of owners) {
+        const existing = byHandle.get(owner.handle);
+        if (existing) {
+            existing.files = [...new Set([...existing.files, ...owner.files])];
+        }
+        else {
+            byHandle.set(owner.handle, { ...owner, files: [...owner.files] });
+        }
+    }
+    // 2. Remove PR author
+    const authorOwner = byHandle.get(prAuthor);
+    const authorSkipped = authorOwner != null;
+    byHandle.delete(prAuthor);
+    // 3. Substitute team-lead when author was the sole owner and all owners are gone
+    let teamLeadSubstituted = false;
+    if (byHandle.size === 0 && teamLead && authorOwner && authorOwner.files.length > 0) {
+        byHandle.set(teamLead, {
+            handle: teamLead,
+            files: authorOwner.files,
+            resolvedVia: 'yaml',
+        });
+        teamLeadSubstituted = true;
+    }
+    const allOwners = [...byHandle.values()];
+    const capHit = allOwners.length > maxOwnersPerPr;
+    return { owners: allOwners, capHit, authorSkipped, teamLeadSubstituted };
+}
+//# sourceMappingURL=owner-safety.js.map
+
+/***/ }),
+
+/***/ 5786:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectRenames = detectRenames;
+exports.getRenamedSymbolCallers = getRenamedSymbolCallers;
+const path = __importStar(__nccwpck_require__(6928));
+function detectRenames(changedFiles) {
+    return changedFiles.filter(f => f.status === 'renamed' && f.previousPath != null);
+}
+async function getRenamedSymbolCallers(renamedFiles, allSymbols, _repoRoot) {
+    const symbols = [];
+    for (const file of renamedFiles) {
+        if (!file.previousPath)
+            continue;
+        const oldStem = path.basename(file.previousPath).replace(/\.[^.]+$/, '');
+        const newStem = path.basename(file.path).replace(/\.[^.]+$/, '');
+        symbols.push({
+            name: newStem,
+            oldName: oldStem,
+            file: file.path,
+            language: languageFromPath(file.path),
+            isRename: true,
+        });
+    }
+    for (const sym of allSymbols) {
+        if (sym.isRename && sym.oldName) {
+            symbols.push(sym);
+        }
+    }
+    return symbols;
+}
+function languageFromPath(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const map = {
+        '.ts': 'typescript', '.tsx': 'typescript',
+        '.js': 'javascript', '.jsx': 'javascript',
+        '.py': 'python',
+        '.rb': 'ruby',
+        '.go': 'go',
+        '.java': 'java',
+        '.rs': 'rust',
+        '.cs': 'csharp',
+        '.php': 'php',
+    };
+    return map[ext] ?? 'unknown';
+}
+//# sourceMappingURL=rename-detect.js.map
+
+/***/ }),
+
+/***/ 1189:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.requestReviews = requestReviews;
+const core = __importStar(__nccwpck_require__(6966));
+async function requestReviews(octokit, repoOwner, repo, pullNumber, resolvedOwners) {
+    const handles = [...new Set(resolvedOwners
+            .filter(o => o.resolvedVia !== 'unresolved')
+            .map(o => o.handle))];
+    for (const handle of handles) {
+        try {
+            await octokit.rest.pulls.requestReviewers({
+                owner: repoOwner,
+                repo,
+                pull_number: pullNumber,
+                reviewers: [handle],
+            });
+            core.info(`Requested review from @${handle}`);
+        }
+        catch (err) {
+            // Non-collaborators and already-requested reviewers both throw here
+            core.warning(`Could not request review from @${handle}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+}
+//# sourceMappingURL=review-requester.js.map
+
+/***/ }),
+
+/***/ 5775:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.countRepoFiles = countRepoFiles;
+exports.filesWithMatches = filesWithMatches;
+const exec = __importStar(__nccwpck_require__(2851));
+async function countRepoFiles(repoRoot) {
+    let count = 0;
+    await exec.exec('rg', ['--files', repoRoot], {
+        ignoreReturnCode: true,
+        silent: true,
+        listeners: { stdline: () => { count++; } },
+    });
+    return count;
+}
+async function filesWithMatches(pattern, repoRoot, wordBoundary = false) {
+    const paths = [];
+    const args = ['--files-with-matches'];
+    if (wordBoundary)
+        args.push('--word-regexp');
+    args.push('--', pattern, repoRoot);
+    const code = await exec.exec('rg', args, {
+        ignoreReturnCode: true,
+        silent: true,
+        listeners: { stdline: (line) => { paths.push(line); } },
+    });
+    return code > 1 ? [] : paths;
+}
+//# sourceMappingURL=ripgrep.js.map
+
+/***/ }),
+
+/***/ 9268:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sanitizeDiff = sanitizeDiff;
+const SECRET_PATTERNS = [
+    /AKIA[0-9A-Z]{16}/g,
+    /gh[pos]_[A-Za-z0-9_]{36,}/g,
+    /Bearer\s+[A-Za-z0-9\-._~+\/]+=*/g,
+    /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END [\w ]*PRIVATE KEY-----/g,
+    /(?:api[-_]?key|api[-_]?secret|access[-_]?token|client[-_]?secret)\s*[=:]\s*["']?[A-Za-z0-9_\-]{16,}["']?/gi,
+    /(?:password|passwd|pwd)\s*[=:]\s*["'][^"']{8,}["']/gi,
+];
+function sanitizeDiff(diff) {
+    let result = diff;
+    let count = 0;
+    for (const pattern of SECRET_PATTERNS) {
+        result = result.replace(pattern, () => {
+            count++;
+            return '[REDACTED]';
+        });
+    }
+    return { sanitized: result, redactedCount: count };
+}
+//# sourceMappingURL=secret-sanitizer.js.map
+
+/***/ }),
+
+/***/ 1762:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractChangedSymbols = extractChangedSymbols;
+// Matches exported TS/JS symbols. Handles: function, async function, class,
+// const/let/var, interface, type, enum, default variants.
+const EXPORT_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?\s+|class\s+|(?:const|let|var|enum)\s+|interface\s+|type\s+)(\w{3,})/;
+const SOURCE_EXTS = /\.(tsx?|jsx?|mjs|cjs)$/i;
+function lang(filePath) {
+    if (/\.tsx?$/.test(filePath))
+        return 'typescript';
+    if (/\.jsx?$/.test(filePath))
+        return 'javascript';
+    return 'unknown';
+}
+function extractChangedSymbols(changedFiles) {
+    const symbols = [];
+    const seen = new Set();
+    for (const file of changedFiles) {
+        if (!file.patch || !SOURCE_EXTS.test(file.path))
+            continue;
+        for (const rawLine of file.patch.split('\n')) {
+            // Only added lines — changed signatures and new exports
+            if (!rawLine.startsWith('+'))
+                continue;
+            const line = rawLine.slice(1);
+            const m = line.match(EXPORT_RE);
+            if (!m)
+                continue;
+            const name = m[1];
+            const key = `${file.path}:${name}`;
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            symbols.push({ name, file: file.path, language: lang(file.path), isRename: false });
+        }
+    }
+    return symbols;
+}
+//# sourceMappingURL=symbol-extract.js.map
+
+/***/ }),
+
+/***/ 9917:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectContractImpact = detectContractImpact;
+const core = __importStar(__nccwpck_require__(6966));
+const path = __importStar(__nccwpck_require__(6928));
+const ripgrep_1 = __nccwpck_require__(5775);
+const CONTRACT_RULES = [
+    {
+        regex: /openapi\.(yaml|yml|json)$/i,
+        label: 'openapi',
+        consumerTerm: (basename) => basename,
+    },
+    {
+        regex: /swagger\.(yaml|yml|json)$/i,
+        label: 'swagger',
+        consumerTerm: (basename) => basename,
+    },
+    {
+        regex: /\.proto$/i,
+        label: 'protobuf',
+        consumerTerm: (basename) => basename,
+    },
+    {
+        regex: /schema\.prisma$/i,
+        label: 'prisma',
+        consumerTerm: () => '@prisma/client',
+    },
+    {
+        regex: /routes?\.(ts|tsx|js|jsx|py|rb|go)$/i,
+        label: 'routes',
+        consumerTerm: (_, stem) => stem,
+    },
+    {
+        // DB migrations — no reliable consumer search; impact is implicit
+        regex: /(migration|migrate)/i,
+        label: 'migration',
+        consumerTerm: () => null,
+    },
+];
+async function detectContractImpact(changedFiles, repoRoot, maxFiles) {
+    const impacted = [];
+    const seen = new Set();
+    for (const file of changedFiles) {
+        const rule = CONTRACT_RULES.find(r => r.regex.test(file.path));
+        if (!rule)
+            continue;
+        const basename = path.basename(file.path);
+        const stem = basename.replace(/\.[^.]+$/, '');
+        const term = rule.consumerTerm(basename, stem);
+        core.info(`Track A: ${file.path} matched '${rule.label}'`);
+        if (!term || stem.length < 3)
+            continue;
+        const matches = await (0, ripgrep_1.filesWithMatches)(term, repoRoot, false);
+        for (const absPath of matches) {
+            const rel = absPath.startsWith(repoRoot + '/')
+                ? absPath.slice(repoRoot.length + 1)
+                : absPath;
+            if (!seen.has(rel) && rel !== file.path) {
+                seen.add(rel);
+                impacted.push({ path: rel, detectedVia: 'track-a' });
+            }
+        }
+    }
+    if (impacted.length > maxFiles) {
+        core.warning(`Track A: trimming ${impacted.length} consumer results to ${maxFiles}`);
+        return impacted.slice(0, maxFiles);
+    }
+    return impacted;
+}
+//# sourceMappingURL=track-a.js.map
+
+/***/ }),
+
+/***/ 2148:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.symbolGrep = symbolGrep;
+const core = __importStar(__nccwpck_require__(6966));
+const ripgrep_1 = __nccwpck_require__(5775);
+async function symbolGrep(symbols, repoRoot, minSymbolLength, maxFiles) {
+    const start = Date.now();
+    const filesSearched = await (0, ripgrep_1.countRepoFiles)(repoRoot);
+    if (filesSearched > maxFiles) {
+        core.warning(`Track B: ${filesSearched} files exceeds cap (${maxFiles}) — skipping symbol grep`);
+        return { impactedFiles: [], filesSearched, capHit: true, runtimeMs: Date.now() - start };
+    }
+    const eligible = symbols.filter(s => {
+        const term = s.isRename && s.oldName ? s.oldName : s.name;
+        return term.length >= minSymbolLength;
+    });
+    const seen = new Set();
+    const impactedFiles = [];
+    for (const sym of eligible) {
+        const term = sym.isRename && sym.oldName ? sym.oldName : sym.name;
+        const matches = await (0, ripgrep_1.filesWithMatches)(term, repoRoot, true);
+        for (const absPath of matches) {
+            const rel = toRelative(absPath, repoRoot);
+            if (!seen.has(rel) && rel !== sym.file) {
+                seen.add(rel);
+                impactedFiles.push({ path: rel, detectedVia: 'track-b', matchedSymbol: sym.name });
+            }
+        }
+    }
+    core.info(`Track B: ${eligible.length} symbols → ${impactedFiles.length} impacted files (${filesSearched} files searched)`);
+    return { impactedFiles, filesSearched, capHit: false, runtimeMs: Date.now() - start };
+}
+function toRelative(absPath, repoRoot) {
+    return absPath.startsWith(repoRoot + '/')
+        ? absPath.slice(repoRoot.length + 1)
+        : absPath;
+}
+//# sourceMappingURL=track-b.js.map
+
+/***/ }),
+
 /***/ 4568:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -38461,1632 +40240,6 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
-/***/ 9000:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AI_REVIEW_MARKER = void 0;
-exports.formatAiReview = formatAiReview;
-exports.AI_REVIEW_MARKER = '<!-- ai-review-report v1 -->';
-const CATEGORY_LABEL = {
-    'logical-error': 'Logical error',
-    'error-handling': 'Missing error handling',
-    'security': 'Security issue',
-    'broken-assumption': 'Broken assumption',
-};
-function formatAiReview(findings, model, commitSha, filesReviewed, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd) {
-    const lines = [exports.AI_REVIEW_MARKER, '## AI Review', ''];
-    const realFindings = findings.filter(f => !f.raw);
-    const totalSkipped = skippedFiles.length + timedOutFiles.length;
-    lines.push(`> Model: ${model} · ${realFindings.length} issue${realFindings.length === 1 ? '' : 's'} found`);
-    lines.push('');
-    if (findings.length === 0) {
-        lines.push('No issues found.');
-        lines.push('');
-    }
-    else {
-        for (const finding of findings) {
-            if (finding.raw) {
-                lines.push(`### ⚠ Unstructured review — \`${finding.file}\``);
-                lines.push(finding.raw);
-            }
-            else {
-                const label = CATEGORY_LABEL[finding.category] ?? finding.category;
-                const loc = finding.line ? `${finding.file}:${finding.line}` : finding.file;
-                lines.push(`### ⚠ ${label} — \`${loc}\``);
-                lines.push(finding.description);
-                if (finding.impact)
-                    lines.push(`**Impact:** ${finding.impact}`);
-                if (finding.fix)
-                    lines.push(`**Fix:** ${finding.fix}`);
-            }
-            lines.push('');
-        }
-    }
-    lines.push('---');
-    const footerParts = [
-        'Advisory',
-        `Last evaluated: ${commitSha.slice(0, 7)}`,
-        `${filesReviewed} file${filesReviewed === 1 ? '' : 's'} reviewed`,
-    ];
-    if (totalSkipped > 0)
-        footerParts.push(`${totalSkipped} skipped`);
-    if (budgetExceededFiles.length > 0)
-        footerParts.push(`${budgetExceededFiles.length} over budget`);
-    if (totalCostUsd > 0)
-        footerParts.push(`~$${totalCostUsd.toFixed(4)}`);
-    lines.push(`> ${footerParts.join(' · ')}`);
-    return lines.join('\n');
-}
-
-
-/***/ }),
-
-/***/ 2247:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.validateApiUrl = validateApiUrl;
-exports.runAiReview = runAiReview;
-const core = __importStar(__nccwpck_require__(6966));
-const secret_sanitizer_1 = __nccwpck_require__(4458);
-// Cost per 1M tokens [input, output]. Unknown models use the conservative fallback.
-const MODEL_PRICING = {
-    'gpt-4o': [2.50, 10.00],
-    'gpt-4o-mini': [0.15, 0.60],
-    'gpt-4-turbo': [10.00, 30.00],
-    'llama-3.3-70b-versatile': [0.59, 0.79],
-    'llama-3.1-70b-versatile': [0.59, 0.79],
-    'mixtral-8x7b-32768': [0.24, 0.24],
-};
-const FALLBACK_PRICING = [5.00, 15.00];
-function estimateCost(model, promptTokens, completionTokens) {
-    const [inputPer1M, outputPer1M] = MODEL_PRICING[model] ?? FALLBACK_PRICING;
-    return (promptTokens / 1_000_000) * inputPer1M + (completionTokens / 1_000_000) * outputPer1M;
-}
-const FOCUS_MAP = {
-    'logical-errors': 'logical errors and incorrect behavior',
-    'security': 'security vulnerabilities, injection risks, and exposed secrets',
-    'error-handling': 'missing or inadequate error handling and silent failure paths',
-    'broken-assumptions': 'broken assumptions about input shape, API contracts, and state',
-    'all': 'all of the above',
-};
-const FINDING_SCHEMA = {
-    type: 'object',
-    required: ['findings'],
-    properties: {
-        findings: {
-            type: 'array',
-            items: {
-                type: 'object',
-                required: ['file', 'category', 'description', 'impact', 'fix'],
-                properties: {
-                    file: { type: 'string' },
-                    line: { type: ['integer', 'null'] },
-                    category: {
-                        type: 'string',
-                        enum: ['logical-error', 'error-handling', 'security', 'broken-assumption'],
-                    },
-                    description: { type: 'string' },
-                    impact: { type: 'string' },
-                    fix: { type: 'string' },
-                },
-            },
-        },
-    },
-};
-function validateApiUrl(rawUrl, allowPrivateNetworks) {
-    let url = rawUrl.replace(/\/+$/, '');
-    if (url.endsWith('/v1')) {
-        core.warning('ai-review: api-url should not include /v1 — stripping automatically');
-        url = url.slice(0, -3);
-    }
-    let parsed;
-    try {
-        parsed = new URL(url);
-    }
-    catch {
-        throw new Error(`ai-review: invalid api-url "${rawUrl}"`);
-    }
-    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-    if (parsed.protocol === 'http:' && !isLocalhost) {
-        throw new Error('ai-review: api-url must use https. Use https:// or http://localhost for local testing.');
-    }
-    if (!allowPrivateNetworks && !isLocalhost) {
-        const h = parsed.hostname;
-        const isPrivate = /^10\./.test(h) ||
-            /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h) ||
-            /^192\.168\./.test(h) ||
-            /^169\.254\./.test(h);
-        if (isPrivate) {
-            throw new Error(`ai-review: api-url points to a private IP (${h}). ` +
-                `Set allow-private-networks: true in .ripple.yml for Ollama/vLLM on a private LAN.`);
-        }
-    }
-    return url;
-}
-function buildSystemPrompt(focusList) {
-    const areas = focusList.includes('all')
-        ? FOCUS_MAP['all']
-        : focusList.map(f => FOCUS_MAP[f] ?? f).join('; ');
-    return [
-        'You are a senior engineer reviewing a pull request diff.',
-        'Identify only concrete, actionable issues. Do not praise. Do not summarize.',
-        `Focus: ${areas}.`,
-        '',
-        'For each issue respond with JSON matching the FindingSchema.',
-        'If no issues found, return an empty findings array.',
-        'Only report issues visible in the diff. Do not speculate beyond the shown code.',
-    ].join('\n');
-}
-async function callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const body = {
-        model,
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
-        ],
-    };
-    if (mode === 'json_schema') {
-        body.response_format = {
-            type: 'json_schema',
-            json_schema: { name: 'review_findings', schema: FINDING_SCHEMA, strict: true },
-        };
-    }
-    else if (mode === 'json_object') {
-        body.response_format = { type: 'json_object' };
-    }
-    try {
-        return await fetch(`${apiUrl}/v1/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-        });
-    }
-    finally {
-        clearTimeout(timer);
-    }
-}
-async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs) {
-    const modes = ['json_schema', 'json_object', 'none'];
-    let response;
-    for (const mode of modes) {
-        response = await callLlmWithFormat(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs, mode);
-        if (response.status !== 400 && response.status !== 422)
-            break;
-        core.info(`ai-review: provider rejected response_format mode "${mode}", trying next`);
-    }
-    if (response.status === 401)
-        throw new Error('ai-review: API key invalid (401)');
-    if (response.status === 403) {
-        throw new Error('ai-review: API access forbidden (403). Check API key permissions or Azure RBAC role.');
-    }
-    if (response.status === 429)
-        throw new Error('ai-review: rate limited (429)');
-    if (!response.ok)
-        throw new Error(`ai-review: LLM request failed with status ${response.status}`);
-    const data = await response.json();
-    return {
-        content: data.choices?.[0]?.message?.content ?? '',
-        promptTokens: data.usage?.prompt_tokens ?? 0,
-        completionTokens: data.usage?.completion_tokens ?? 0,
-    };
-}
-function parseFindings(content, filePath) {
-    try {
-        const parsed = JSON.parse(content);
-        if (Array.isArray(parsed.findings)) {
-            return parsed.findings.map((f) => ({
-                file: typeof f.file === 'string' ? f.file : filePath,
-                line: typeof f.line === 'number' ? f.line : null,
-                category: f.category ?? 'logical-error',
-                description: String(f.description ?? ''),
-                impact: String(f.impact ?? ''),
-                fix: String(f.fix ?? ''),
-            }));
-        }
-    }
-    catch { /* fall through to prose fallback */ }
-    if (content.trim().length > 0) {
-        return [{ file: filePath, line: null, category: 'logical-error', description: '', impact: '', fix: '', raw: content }];
-    }
-    return [];
-}
-async function reviewFileWithRetry(file, apiUrl, apiKey, model, systemPrompt, timeoutMs, retryLimit) {
-    const { sanitized, redactedCount } = (0, secret_sanitizer_1.sanitizeDiff)(file.diff);
-    if (redactedCount > 0) {
-        core.info(`ai-review: redacted ${redactedCount} potential secret(s) in ${file.path}`);
-    }
-    const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\``;
-    core.info(`ai-review: reviewing ${file.path} (~${file.lineCount} changed lines)`);
-    let lastErr;
-    for (let attempt = 0; attempt <= retryLimit; attempt++) {
-        if (attempt > 0) {
-            await new Promise(r => setTimeout(r, 2 ** attempt * 1000));
-            core.info(`ai-review: retrying ${file.path} (attempt ${attempt + 1})`);
-        }
-        try {
-            const { content, promptTokens, completionTokens } = await callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs);
-            const costUsd = estimateCost(model, promptTokens, completionTokens);
-            if (!content)
-                return { findings: [], costUsd };
-            return { findings: parseFindings(content, file.path), costUsd };
-        }
-        catch (err) {
-            lastErr = err instanceof Error ? err : new Error(String(err));
-            if (!lastErr.message.includes('429') && !lastErr.message.includes('aborted'))
-                break;
-        }
-    }
-    throw lastErr ?? new Error('ai-review: unknown error');
-}
-async function runAiReview(options) {
-    const { config, apiKey, files } = options;
-    const apiUrl = validateApiUrl(config.apiUrl, config.allowPrivateNetworks);
-    const systemPrompt = buildSystemPrompt(config.focus);
-    const timeoutMs = config.timeoutSeconds * 1000;
-    core.setSecret(apiKey);
-    const allFindings = [];
-    const skippedFiles = [];
-    const timedOutFiles = [];
-    const budgetExceededFiles = [];
-    let totalCostUsd = 0;
-    const maxConcurrent = 5;
-    for (let i = 0; i < files.length; i += maxConcurrent) {
-        if (config.budgetUsd > 0 && totalCostUsd >= config.budgetUsd) {
-            const remaining = files.slice(i).map(f => f.path);
-            budgetExceededFiles.push(...remaining);
-            core.warning(`ai-review: budget cap $${config.budgetUsd} reached — skipping ${remaining.length} file(s)`);
-            break;
-        }
-        const batch = files.slice(i, i + maxConcurrent);
-        const results = await Promise.allSettled(batch.map(f => reviewFileWithRetry(f, apiUrl, apiKey, config.model, systemPrompt, timeoutMs, 2)));
-        for (let j = 0; j < results.length; j++) {
-            const r = results[j];
-            const file = batch[j];
-            if (r.status === 'fulfilled') {
-                allFindings.push(...r.value.findings);
-                totalCostUsd += r.value.costUsd;
-            }
-            else {
-                const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-                if (msg.includes('aborted') || msg.includes('timed out')) {
-                    timedOutFiles.push(file.path);
-                    core.warning(`ai-review: timed out reviewing ${file.path}`);
-                }
-                else {
-                    skippedFiles.push(file.path);
-                    core.warning(`ai-review: skipped ${file.path} — ${msg}`);
-                }
-            }
-        }
-    }
-    return { findings: allFindings, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd };
-}
-
-
-/***/ }),
-
-/***/ 3079:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isBotAuthor = isBotAuthor;
-const micromatch_1 = __importDefault(__nccwpck_require__(3095));
-function isBotAuthor(handle, extraPatterns) {
-    // GitHub App convention: all App-based bots end with the literal suffix [bot]
-    if (handle.endsWith('[bot]'))
-        return true;
-    // User-supplied patterns for bots that skip the [bot] convention (e.g. 'renovate', 'devin-ai')
-    return extraPatterns.length > 0 && micromatch_1.default.isMatch(handle, extraPatterns, { nocase: true });
-}
-
-
-/***/ }),
-
-/***/ 7073:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isBranchProtected = isBranchProtected;
-const core = __importStar(__nccwpck_require__(6966));
-async function isBranchProtected(octokit, owner, repo, branch) {
-    try {
-        await octokit.rest.repos.getBranchProtection({ owner, repo, branch });
-        return true;
-    }
-    catch (err) {
-        const status = err.status;
-        if (status === 404)
-            return false; // no protection rules configured
-        if (status === 403)
-            return false; // no admin permission — treat as unprotected
-        core.warning(`Branch protection check failed: ${err instanceof Error ? err.message : String(err)}`);
-        return true; // assume protected on network/auth errors to avoid false banners
-    }
-}
-
-
-/***/ }),
-
-/***/ 1272:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getReportCommentMarker = getReportCommentMarker;
-exports.formatReport = formatReport;
-const MARKER = '<!-- ripple-report -->';
-function getReportCommentMarker() {
-    return MARKER;
-}
-function formatReport(report) {
-    const lines = [MARKER, '## Ripple Report', ''];
-    const modeLabel = report.advisoryMode ? 'advisory mode' : 'gate mode';
-    lines.push(`> Scanned **${report.filesSearched.toLocaleString()}** files in ${report.runtimeMs}ms · ${modeLabel}`);
-    lines.push('');
-    if (report.impactedFiles.length === 0) {
-        lines.push('No downstream impact detected.');
-        return appendFooter(lines, report);
-    }
-    // Owner sections
-    if (report.owners.length > 0) {
-        lines.push(`### Owners to notify (${report.owners.length})`);
-        lines.push('');
-        for (const owner of report.owners) {
-            const count = owner.files.length;
-            lines.push(`**@${owner.handle}** — ${count} file${count !== 1 ? 's' : ''}`);
-            for (const f of owner.files)
-                lines.push(`- \`${f}\``);
-            lines.push('');
-        }
-    }
-    // Unresolved files
-    if (report.unresolvedFiles.length > 0) {
-        lines.push('### Files with no owner');
-        lines.push('');
-        lines.push('Add these paths to `.ripple.yml` so future PRs are routed automatically:');
-        lines.push('');
-        lines.push('```yaml');
-        lines.push('paths:');
-        for (const f of report.unresolvedFiles)
-            lines.push(`  '${f}': your-handle`);
-        lines.push('```');
-        lines.push('');
-    }
-    return appendFooter(lines, report);
-}
-function appendFooter(lines, report) {
-    const footers = [];
-    if (report.ownerCapHit) {
-        const prefix = report.botAuthor ? '**Bot PR** — owner cap hit; ' : '';
-        footers.push(`> ${prefix}Too many unique owners to route reviews automatically. ` +
-            'Increase `max-owners-per-pr` or consolidate ownership in `.ripple.yml`.');
-    }
-    else if (report.botAuthor && !report.advisoryMode) {
-        footers.push(`> **Bot PR** — gate mode auto-applied because @${report.prAuthor} is a bot. ` +
-            'All impacted file owners must approve before merge.');
-    }
-    else if (report.advisoryMode) {
-        footers.push('> Running in **advisory mode** — this report is informational only. ' +
-            'Set `mode: gate` to require owner approvals before merge.');
-    }
-    if (!report.branchProtectionConfigured) {
-        footers.push('> **Setup required:** Branch protection is not configured on this branch. ' +
-            'Without it, gate mode cannot block merges. ' +
-            'Go to **Settings → Branches → Branch protection rules** and add a required status check.');
-    }
-    if (footers.length > 0) {
-        lines.push('---');
-        lines.push(...footers);
-    }
-    return lines.join('\n');
-}
-
-
-/***/ }),
-
-/***/ 8919:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.upsertComment = upsertComment;
-const core = __importStar(__nccwpck_require__(6966));
-const comment_formatter_1 = __nccwpck_require__(1272);
-const ai_review_formatter_1 = __nccwpck_require__(9000);
-const MARKERS = {
-    ripple: (0, comment_formatter_1.getReportCommentMarker)(),
-    'ai-review': ai_review_formatter_1.AI_REVIEW_MARKER,
-};
-async function upsertComment(octokit, owner, repo, pullNumber, body, label = 'ripple') {
-    const marker = MARKERS[label];
-    let existing;
-    let page = 1;
-    while (!existing) {
-        const { data } = await octokit.rest.issues.listComments({
-            owner,
-            repo,
-            issue_number: pullNumber,
-            per_page: 100,
-            page,
-        });
-        if (data.length === 0)
-            break;
-        existing = data.find(c => c.body?.includes(marker));
-        if (data.length < 100)
-            break;
-        page++;
-    }
-    if (existing) {
-        await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-        core.info(`Updated existing ${label} comment #${existing.id}`);
-    }
-    else {
-        await octokit.rest.issues.createComment({ owner, repo, issue_number: pullNumber, body });
-        core.info(`Created ${label} comment`);
-    }
-}
-
-
-/***/ }),
-
-/***/ 2371:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getChangedFiles = getChangedFiles;
-exports.getSourceFiles = getSourceFiles;
-const core = __importStar(__nccwpck_require__(6966));
-async function getChangedFiles(octokit, owner, repo, pullNumber) {
-    const files = [];
-    let page = 1;
-    while (true) {
-        const { data } = await octokit.rest.pulls.listFiles({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            per_page: 100,
-            page,
-        });
-        if (data.length === 0)
-            break;
-        for (const f of data) {
-            const status = f.status;
-            files.push({
-                path: f.filename,
-                status,
-                previousPath: f.previous_filename,
-                patch: f.patch,
-            });
-        }
-        if (data.length < 100)
-            break;
-        page++;
-    }
-    core.info(`Diff: ${files.length} changed files`);
-    return files;
-}
-function getSourceFiles(files) {
-    const ignored = /\.(md|txt|lock|sum|png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz)$/i;
-    return files.filter(f => f.status !== 'removed' && !ignored.test(f.path));
-}
-
-
-/***/ }),
-
-/***/ 7460:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.splitFiles = splitFiles;
-exports.checkPrMinLines = checkPrMinLines;
-const micromatch_1 = __importDefault(__nccwpck_require__(3095));
-function splitFiles(files, config, impactedPaths) {
-    let candidates;
-    if (impactedPaths !== null) {
-        const impactedSet = new Set(impactedPaths);
-        candidates = files.filter(f => impactedSet.has(f.path));
-    }
-    else {
-        candidates = files;
-    }
-    candidates = candidates.filter(f => f.status !== 'removed' && f.patch);
-    if (config.skipPatterns.length > 0) {
-        candidates = candidates.filter(f => !micromatch_1.default.isMatch(f.path, config.skipPatterns));
-    }
-    const result = [];
-    for (const f of candidates) {
-        const diff = f.patch ?? '';
-        const lineCount = diff.split('\n').filter(l => l.startsWith('+') || l.startsWith('-')).length;
-        if (lineCount < config.minFileDiffLines)
-            continue;
-        result.push({
-            path: f.path,
-            diff: diff.slice(0, config.maxFileTokens),
-            lineCount,
-        });
-    }
-    return result;
-}
-function checkPrMinLines(files, config) {
-    const total = files.reduce((sum, f) => {
-        const lines = (f.patch ?? '').split('\n').filter(l => l.startsWith('+') || l.startsWith('-')).length;
-        return sum + lines;
-    }, 0);
-    return total >= config.minPrDiffLines;
-}
-
-
-/***/ }),
-
-/***/ 7091:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.emailToHandle = emailToHandle;
-async function emailToHandle(email, octokit) {
-    try {
-        const { data } = await octokit.rest.search.users({
-            q: `${email} in:email`,
-            per_page: 1,
-        });
-        return data.items[0]?.login;
-    }
-    catch {
-        return undefined;
-    }
-}
-
-
-/***/ }),
-
-/***/ 6866:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__nccwpck_require__(6966));
-const github = __importStar(__nccwpck_require__(4903));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const yaml = __importStar(__nccwpck_require__(3313));
-const diff_1 = __nccwpck_require__(2371);
-const track_a_1 = __nccwpck_require__(8927);
-const track_b_1 = __nccwpck_require__(2410);
-const rename_detect_1 = __nccwpck_require__(3124);
-const symbol_extract_1 = __nccwpck_require__(2460);
-const owner_resolver_1 = __nccwpck_require__(892);
-const owner_safety_1 = __nccwpck_require__(6340);
-const branch_check_1 = __nccwpck_require__(7073);
-const comment_formatter_1 = __nccwpck_require__(1272);
-const comment_1 = __nccwpck_require__(8919);
-const review_requester_1 = __nccwpck_require__(9959);
-const bot_detect_1 = __nccwpck_require__(3079);
-const file_splitter_1 = __nccwpck_require__(7460);
-const ai_review_1 = __nccwpck_require__(2247);
-const ai_review_formatter_1 = __nccwpck_require__(9000);
-function getInputs() {
-    return {
-        githubToken: core.getInput('github-token', { required: true }),
-        mode: (core.getInput('mode') || 'advisory'),
-        minSymbolLength: parseInt(core.getInput('min-symbol-length') || '5', 10),
-        maxFilesToSearch: parseInt(core.getInput('max-files-to-search') || '50000', 10),
-        maxOwnersPerPr: parseInt(core.getInput('max-owners-per-pr') || '10', 10),
-        teamLead: core.getInput('team-lead') || '',
-        botPatterns: (core.getInput('bot-patterns') || '')
-            .split(',').map(p => p.trim()).filter(Boolean),
-    };
-}
-function loadAiReviewConfig(repoRoot) {
-    const configPath = path.join(repoRoot, '.ripple.yml');
-    if (!fs.existsSync(configPath))
-        return null;
-    let raw;
-    try {
-        raw = yaml.load(fs.readFileSync(configPath, 'utf8')) ?? {};
-    }
-    catch {
-        return null;
-    }
-    const aiReview = raw['ai-review'];
-    if (!aiReview || aiReview['enabled'] !== true)
-        return null;
-    const apiUrl = String(aiReview['api-url'] ?? '');
-    const model = String(aiReview['model'] ?? '');
-    if (!apiUrl || !model) {
-        core.warning('ai-review: api-url and model are required in .ripple.yml — skipping ai-review');
-        return null;
-    }
-    const hasOwnerRouting = Boolean(raw['paths'] && typeof raw['paths'] === 'object' && Object.keys(raw['paths']).length > 0);
-    const config = {
-        enabled: true,
-        apiUrl,
-        model,
-        focus: String(aiReview['focus'] ?? 'logical-errors,error-handling').split(',').map(s => s.trim()),
-        skipPatterns: String(aiReview['skip-patterns'] ?? '').split(',').map(s => s.trim()).filter(Boolean),
-        skipLabel: String(aiReview['skip-label'] ?? 'skip-ai-review'),
-        minFileDiffLines: Number(aiReview['min-file-diff-lines'] ?? 1),
-        minPrDiffLines: Number(aiReview['min-pr-diff-lines'] ?? 1),
-        maxFileTokens: Number(aiReview['max-file-tokens'] ?? 32000),
-        timeoutSeconds: Number(aiReview['timeout-seconds'] ?? 30),
-        allowPrivateNetworks: aiReview['allow-private-networks'] === true,
-        postAsComment: aiReview['post-as-comment'] !== false,
-        budgetUsd: Number(aiReview['budget-usd'] ?? 0),
-    };
-    return { config, hasOwnerRouting };
-}
-async function runAiReviewPipeline(octokit, owner, repo, pullNumber, allChanged, allImpacted, config, apiKey, commitSha, hasOwnerRouting, prLabels) {
-    if (prLabels.includes(config.skipLabel)) {
-        core.info(`ai-review: skipping — PR has label "${config.skipLabel}"`);
-        return;
-    }
-    if (!(0, file_splitter_1.checkPrMinLines)(allChanged, config)) {
-        core.info('ai-review: skipping — PR has fewer changed lines than min-pr-diff-lines');
-        return;
-    }
-    const impactedPaths = hasOwnerRouting ? allImpacted.map(f => f.path) : null;
-    const fileDiffs = (0, file_splitter_1.splitFiles)(allChanged, config, impactedPaths);
-    if (fileDiffs.length === 0) {
-        core.info('ai-review: no files to review after filtering');
-        return;
-    }
-    core.info(`ai-review: reviewing ${fileDiffs.length} file(s)`);
-    if (config.postAsComment) {
-        const statusBody = `${ai_review_formatter_1.AI_REVIEW_MARKER}\n## AI Review\n\n> Reviewing ${fileDiffs.length} file${fileDiffs.length === 1 ? '' : 's'}...`;
-        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, statusBody, 'ai-review');
-    }
-    const { findings, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd } = await (0, ai_review_1.runAiReview)({
-        config,
-        apiKey,
-        files: fileDiffs,
-        commitSha,
-    });
-    const filesReviewed = fileDiffs.length - skippedFiles.length - timedOutFiles.length - budgetExceededFiles.length;
-    const commentBody = (0, ai_review_formatter_1.formatAiReview)(findings, config.model, commitSha, filesReviewed, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd);
-    if (config.postAsComment) {
-        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody, 'ai-review');
-    }
-    else {
-        core.info(commentBody);
-    }
-}
-async function run() {
-    const startTime = Date.now();
-    try {
-        const inputs = getInputs();
-        const octokit = github.getOctokit(inputs.githubToken);
-        const ctx = github.context;
-        if (!ctx.payload.pull_request) {
-            core.info('Not a pull_request event — skipping');
-            return;
-        }
-        const pr = ctx.payload.pull_request;
-        const { owner, repo } = ctx.repo;
-        const pullNumber = pr.number;
-        const prAuthor = pr.user.login;
-        const baseBranch = pr.base.ref;
-        const commitSha = pr.head.sha;
-        const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
-        const prLabels = (pr.labels ?? []).map(l => l.name);
-        core.info(`Ripple: PR #${pullNumber} by @${prAuthor} → ${baseBranch}`);
-        // 1. Fetch diff
-        const allChanged = await (0, diff_1.getChangedFiles)(octokit, owner, repo, pullNumber);
-        const sourceFiles = (0, diff_1.getSourceFiles)(allChanged);
-        if (sourceFiles.length === 0) {
-            core.info('No source files changed — skipping');
-            return;
-        }
-        // 2. Detect renames (so Track B searches OLD name for renamed symbols)
-        const renamedFiles = (0, rename_detect_1.detectRenames)(sourceFiles);
-        // 3. Extract exported symbols from the diff (regex-based, no AST required)
-        const patchSymbols = (0, symbol_extract_1.extractChangedSymbols)(sourceFiles);
-        const renamedSymbols = await (0, rename_detect_1.getRenamedSymbolCallers)(renamedFiles, [], repoRoot);
-        const changedSymbols = [...patchSymbols, ...renamedSymbols];
-        core.info(`Symbols: ${patchSymbols.length} from patch, ${renamedSymbols.length} from renames`);
-        // 4. Track A — contract file detection
-        const trackAImpact = await (0, track_a_1.detectContractImpact)(sourceFiles, repoRoot, inputs.maxFilesToSearch);
-        // 5. Track B — symbol grep
-        const trackBResult = await (0, track_b_1.symbolGrep)(changedSymbols, repoRoot, inputs.minSymbolLength, inputs.maxFilesToSearch);
-        // 6. Merge and deduplicate impacted files
-        const allImpacted = [...trackAImpact, ...trackBResult.impactedFiles];
-        const impactedPaths = [...new Set(allImpacted.map(f => f.path))];
-        // 7. Resolve owners
-        const rawOwners = await (0, owner_resolver_1.resolveOwners)(impactedPaths, repoRoot, octokit);
-        // 8. Apply safety rules (author exclusion, team-lead fallback, cap)
-        const safety = (0, owner_safety_1.applyOwnerSafetyRules)(rawOwners, prAuthor, inputs.teamLead, inputs.maxOwnersPerPr);
-        const botPr = (0, bot_detect_1.isBotAuthor)(prAuthor, inputs.botPatterns);
-        if (botPr)
-            core.info(`Bot PR detected (@${prAuthor}) — forcing gate mode`);
-        // advisory when: owner cap hit, OR (not a bot PR AND configured as advisory)
-        const advisoryMode = safety.capHit || (!botPr && inputs.mode === 'advisory');
-        // 9. Branch protection check
-        const branchProtected = await (0, branch_check_1.isBranchProtected)(octokit, owner, repo, baseBranch);
-        // 10. Build report
-        const report = {
-            changedFiles: allChanged,
-            changedSymbols,
-            impactedFiles: allImpacted,
-            owners: safety.owners,
-            unresolvedFiles: impactedPaths.filter(p => !safety.owners.some(o => o.files.includes(p))),
-            prAuthor,
-            advisoryMode,
-            ownerCapHit: safety.capHit,
-            branchProtectionConfigured: branchProtected,
-            runtimeMs: Date.now() - startTime,
-            filesSearched: trackBResult.filesSearched,
-            botAuthor: botPr,
-        };
-        core.info(`Ripple complete: ${report.impactedFiles.length} impacted files, ` +
-            `${report.owners.length} owners, ${report.runtimeMs}ms`);
-        // 11. Post Ripple comment
-        const commentBody = (0, comment_formatter_1.formatReport)(report);
-        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody);
-        // 12. Request reviews in gate mode
-        if (!advisoryMode) {
-            await (0, review_requester_1.requestReviews)(octokit, owner, repo, pullNumber, safety.owners);
-        }
-        // 13. AI Review (if enabled in .ripple.yml)
-        const aiReview = loadAiReviewConfig(repoRoot);
-        const aiApiKey = core.getInput('ai-api-key');
-        if (aiReview) {
-            if (!aiApiKey) {
-                core.warning('ai-review is enabled in .ripple.yml but ai-api-key input is not set — skipping');
-            }
-            else {
-                await runAiReviewPipeline(octokit, owner, repo, pullNumber, allChanged, allImpacted, aiReview.config, aiApiKey, commitSha, aiReview.hasOwnerRouting, prLabels);
-            }
-        }
-    }
-    catch (err) {
-        core.setFailed(err instanceof Error ? err.message : String(err));
-    }
-}
-run();
-
-
-/***/ }),
-
-/***/ 892:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.resolveOwners = resolveOwners;
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const exec = __importStar(__nccwpck_require__(2851));
-const core = __importStar(__nccwpck_require__(6966));
-const yaml = __importStar(__nccwpck_require__(3313));
-const micromatch_1 = __importDefault(__nccwpck_require__(3095));
-const github_user_1 = __nccwpck_require__(7091);
-function loadConfig(repoRoot) {
-    const configPath = path.join(repoRoot, '.ripple.yml');
-    if (!fs.existsSync(configPath))
-        return {};
-    try {
-        return yaml.load(fs.readFileSync(configPath, 'utf8')) ?? {};
-    }
-    catch {
-        core.warning('Failed to parse .ripple.yml — skipping YAML owner resolution');
-        return {};
-    }
-}
-function matchYaml(filePath, pathConfig) {
-    for (const [glob, owners] of Object.entries(pathConfig)) {
-        if (micromatch_1.default.isMatch(filePath, glob)) {
-            return Array.isArray(owners) ? owners : [owners];
-        }
-    }
-    return [];
-}
-async function gitBlameEmail(filePath, repoRoot) {
-    let out = '';
-    const code = await exec.exec('git', ['-C', repoRoot, 'log', '--format=%ae', '-1', '--', filePath], {
-        ignoreReturnCode: true,
-        silent: true,
-        listeners: { stdout: (d) => { out += d.toString(); } },
-    });
-    if (code !== 0)
-        return undefined;
-    const email = out.trim();
-    return email || undefined;
-}
-async function resolveOwners(impactedPaths, repoRoot, octokit) {
-    const config = loadConfig(repoRoot);
-    const pathConfig = config.paths ?? {};
-    // handle → { files, resolvedVia } — first-touch wins for resolvedVia
-    const handleFiles = new Map();
-    const handleVia = new Map();
-    const emailHandleCache = new Map();
-    function addOwner(handle, filePath, via) {
-        if (!handleVia.has(handle))
-            handleVia.set(handle, via);
-        const files = handleFiles.get(handle) ?? [];
-        files.push(filePath);
-        handleFiles.set(handle, files);
-    }
-    for (const filePath of impactedPaths) {
-        const handles = matchYaml(filePath, pathConfig);
-        if (handles.length > 0) {
-            for (const h of handles)
-                addOwner(h, filePath, 'yaml');
-            continue;
-        }
-        const email = await gitBlameEmail(filePath, repoRoot);
-        if (!email)
-            continue;
-        if (!emailHandleCache.has(email)) {
-            emailHandleCache.set(email, await (0, github_user_1.emailToHandle)(email, octokit));
-        }
-        const handle = emailHandleCache.get(email);
-        if (handle) {
-            addOwner(handle, filePath, 'git-blame');
-        }
-        // No handle found → file lands in unresolvedFiles (computed in index.ts)
-    }
-    return [...handleFiles.entries()].map(([handle, files]) => ({
-        handle,
-        files,
-        resolvedVia: handleVia.get(handle) ?? 'unresolved',
-    }));
-}
-
-
-/***/ }),
-
-/***/ 6340:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.applyOwnerSafetyRules = applyOwnerSafetyRules;
-function applyOwnerSafetyRules(owners, prAuthor, teamLead, maxOwnersPerPr) {
-    // 1. Dedup: merge files for duplicate handles
-    const byHandle = new Map();
-    for (const owner of owners) {
-        const existing = byHandle.get(owner.handle);
-        if (existing) {
-            existing.files = [...new Set([...existing.files, ...owner.files])];
-        }
-        else {
-            byHandle.set(owner.handle, { ...owner, files: [...owner.files] });
-        }
-    }
-    // 2. Remove PR author
-    const authorOwner = byHandle.get(prAuthor);
-    const authorSkipped = authorOwner != null;
-    byHandle.delete(prAuthor);
-    // 3. Substitute team-lead when author was the sole owner and all owners are gone
-    let teamLeadSubstituted = false;
-    if (byHandle.size === 0 && teamLead && authorOwner && authorOwner.files.length > 0) {
-        byHandle.set(teamLead, {
-            handle: teamLead,
-            files: authorOwner.files,
-            resolvedVia: 'yaml',
-        });
-        teamLeadSubstituted = true;
-    }
-    const allOwners = [...byHandle.values()];
-    const capHit = allOwners.length > maxOwnersPerPr;
-    return { owners: allOwners, capHit, authorSkipped, teamLeadSubstituted };
-}
-
-
-/***/ }),
-
-/***/ 3124:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.detectRenames = detectRenames;
-exports.getRenamedSymbolCallers = getRenamedSymbolCallers;
-const path = __importStar(__nccwpck_require__(6928));
-function detectRenames(changedFiles) {
-    return changedFiles.filter(f => f.status === 'renamed' && f.previousPath != null);
-}
-async function getRenamedSymbolCallers(renamedFiles, allSymbols, _repoRoot) {
-    const symbols = [];
-    for (const file of renamedFiles) {
-        if (!file.previousPath)
-            continue;
-        const oldStem = path.basename(file.previousPath).replace(/\.[^.]+$/, '');
-        const newStem = path.basename(file.path).replace(/\.[^.]+$/, '');
-        symbols.push({
-            name: newStem,
-            oldName: oldStem,
-            file: file.path,
-            language: languageFromPath(file.path),
-            isRename: true,
-        });
-    }
-    for (const sym of allSymbols) {
-        if (sym.isRename && sym.oldName) {
-            symbols.push(sym);
-        }
-    }
-    return symbols;
-}
-function languageFromPath(filePath) {
-    const ext = path.extname(filePath).toLowerCase();
-    const map = {
-        '.ts': 'typescript', '.tsx': 'typescript',
-        '.js': 'javascript', '.jsx': 'javascript',
-        '.py': 'python',
-        '.rb': 'ruby',
-        '.go': 'go',
-        '.java': 'java',
-        '.rs': 'rust',
-        '.cs': 'csharp',
-        '.php': 'php',
-    };
-    return map[ext] ?? 'unknown';
-}
-
-
-/***/ }),
-
-/***/ 9959:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.requestReviews = requestReviews;
-const core = __importStar(__nccwpck_require__(6966));
-async function requestReviews(octokit, repoOwner, repo, pullNumber, resolvedOwners) {
-    const handles = [...new Set(resolvedOwners
-            .filter(o => o.resolvedVia !== 'unresolved')
-            .map(o => o.handle))];
-    for (const handle of handles) {
-        try {
-            await octokit.rest.pulls.requestReviewers({
-                owner: repoOwner,
-                repo,
-                pull_number: pullNumber,
-                reviewers: [handle],
-            });
-            core.info(`Requested review from @${handle}`);
-        }
-        catch (err) {
-            // Non-collaborators and already-requested reviewers both throw here
-            core.warning(`Could not request review from @${handle}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-    }
-}
-
-
-/***/ }),
-
-/***/ 1645:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.countRepoFiles = countRepoFiles;
-exports.filesWithMatches = filesWithMatches;
-const exec = __importStar(__nccwpck_require__(2851));
-async function countRepoFiles(repoRoot) {
-    let count = 0;
-    await exec.exec('rg', ['--files', repoRoot], {
-        ignoreReturnCode: true,
-        silent: true,
-        listeners: { stdline: () => { count++; } },
-    });
-    return count;
-}
-async function filesWithMatches(pattern, repoRoot, wordBoundary = false) {
-    const paths = [];
-    const args = ['--files-with-matches'];
-    if (wordBoundary)
-        args.push('--word-regexp');
-    args.push('--', pattern, repoRoot);
-    const code = await exec.exec('rg', args, {
-        ignoreReturnCode: true,
-        silent: true,
-        listeners: { stdline: (line) => { paths.push(line); } },
-    });
-    return code > 1 ? [] : paths;
-}
-
-
-/***/ }),
-
-/***/ 4458:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.sanitizeDiff = sanitizeDiff;
-const SECRET_PATTERNS = [
-    /AKIA[0-9A-Z]{16}/g,
-    /gh[pos]_[A-Za-z0-9_]{36,}/g,
-    /Bearer\s+[A-Za-z0-9\-._~+\/]+=*/g,
-    /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END [\w ]*PRIVATE KEY-----/g,
-    /(?:api[-_]?key|api[-_]?secret|access[-_]?token|client[-_]?secret)\s*[=:]\s*["']?[A-Za-z0-9_\-]{16,}["']?/gi,
-    /(?:password|passwd|pwd)\s*[=:]\s*["'][^"']{8,}["']/gi,
-];
-function sanitizeDiff(diff) {
-    let result = diff;
-    let count = 0;
-    for (const pattern of SECRET_PATTERNS) {
-        result = result.replace(pattern, () => {
-            count++;
-            return '[REDACTED]';
-        });
-    }
-    return { sanitized: result, redactedCount: count };
-}
-
-
-/***/ }),
-
-/***/ 2460:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.extractChangedSymbols = extractChangedSymbols;
-// Matches exported TS/JS symbols. Handles: function, async function, class,
-// const/let/var, interface, type, enum, default variants.
-const EXPORT_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?\s+|class\s+|(?:const|let|var|enum)\s+|interface\s+|type\s+)(\w{3,})/;
-const SOURCE_EXTS = /\.(tsx?|jsx?|mjs|cjs)$/i;
-function lang(filePath) {
-    if (/\.tsx?$/.test(filePath))
-        return 'typescript';
-    if (/\.jsx?$/.test(filePath))
-        return 'javascript';
-    return 'unknown';
-}
-function extractChangedSymbols(changedFiles) {
-    const symbols = [];
-    const seen = new Set();
-    for (const file of changedFiles) {
-        if (!file.patch || !SOURCE_EXTS.test(file.path))
-            continue;
-        for (const rawLine of file.patch.split('\n')) {
-            // Only added lines — changed signatures and new exports
-            if (!rawLine.startsWith('+'))
-                continue;
-            const line = rawLine.slice(1);
-            const m = line.match(EXPORT_RE);
-            if (!m)
-                continue;
-            const name = m[1];
-            const key = `${file.path}:${name}`;
-            if (seen.has(key))
-                continue;
-            seen.add(key);
-            symbols.push({ name, file: file.path, language: lang(file.path), isRename: false });
-        }
-    }
-    return symbols;
-}
-
-
-/***/ }),
-
-/***/ 8927:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.detectContractImpact = detectContractImpact;
-const core = __importStar(__nccwpck_require__(6966));
-const path = __importStar(__nccwpck_require__(6928));
-const ripgrep_1 = __nccwpck_require__(1645);
-const CONTRACT_RULES = [
-    {
-        regex: /openapi\.(yaml|yml|json)$/i,
-        label: 'openapi',
-        consumerTerm: (basename) => basename,
-    },
-    {
-        regex: /swagger\.(yaml|yml|json)$/i,
-        label: 'swagger',
-        consumerTerm: (basename) => basename,
-    },
-    {
-        regex: /\.proto$/i,
-        label: 'protobuf',
-        consumerTerm: (basename) => basename,
-    },
-    {
-        regex: /schema\.prisma$/i,
-        label: 'prisma',
-        consumerTerm: () => '@prisma/client',
-    },
-    {
-        regex: /routes?\.(ts|tsx|js|jsx|py|rb|go)$/i,
-        label: 'routes',
-        consumerTerm: (_, stem) => stem,
-    },
-    {
-        // DB migrations — no reliable consumer search; impact is implicit
-        regex: /(migration|migrate)/i,
-        label: 'migration',
-        consumerTerm: () => null,
-    },
-];
-async function detectContractImpact(changedFiles, repoRoot, maxFiles) {
-    const impacted = [];
-    const seen = new Set();
-    for (const file of changedFiles) {
-        const rule = CONTRACT_RULES.find(r => r.regex.test(file.path));
-        if (!rule)
-            continue;
-        const basename = path.basename(file.path);
-        const stem = basename.replace(/\.[^.]+$/, '');
-        const term = rule.consumerTerm(basename, stem);
-        core.info(`Track A: ${file.path} matched '${rule.label}'`);
-        if (!term || stem.length < 3)
-            continue;
-        const matches = await (0, ripgrep_1.filesWithMatches)(term, repoRoot, false);
-        for (const absPath of matches) {
-            const rel = absPath.startsWith(repoRoot + '/')
-                ? absPath.slice(repoRoot.length + 1)
-                : absPath;
-            if (!seen.has(rel) && rel !== file.path) {
-                seen.add(rel);
-                impacted.push({ path: rel, detectedVia: 'track-a' });
-            }
-        }
-    }
-    if (impacted.length > maxFiles) {
-        core.warning(`Track A: trimming ${impacted.length} consumer results to ${maxFiles}`);
-        return impacted.slice(0, maxFiles);
-    }
-    return impacted;
-}
-
-
-/***/ }),
-
-/***/ 2410:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.symbolGrep = symbolGrep;
-const core = __importStar(__nccwpck_require__(6966));
-const ripgrep_1 = __nccwpck_require__(1645);
-async function symbolGrep(symbols, repoRoot, minSymbolLength, maxFiles) {
-    const start = Date.now();
-    const filesSearched = await (0, ripgrep_1.countRepoFiles)(repoRoot);
-    if (filesSearched > maxFiles) {
-        core.warning(`Track B: ${filesSearched} files exceeds cap (${maxFiles}) — skipping symbol grep`);
-        return { impactedFiles: [], filesSearched, capHit: true, runtimeMs: Date.now() - start };
-    }
-    const eligible = symbols.filter(s => {
-        const term = s.isRename && s.oldName ? s.oldName : s.name;
-        return term.length >= minSymbolLength;
-    });
-    const seen = new Set();
-    const impactedFiles = [];
-    for (const sym of eligible) {
-        const term = sym.isRename && sym.oldName ? sym.oldName : sym.name;
-        const matches = await (0, ripgrep_1.filesWithMatches)(term, repoRoot, true);
-        for (const absPath of matches) {
-            const rel = toRelative(absPath, repoRoot);
-            if (!seen.has(rel) && rel !== sym.file) {
-                seen.add(rel);
-                impactedFiles.push({ path: rel, detectedVia: 'track-b', matchedSymbol: sym.name });
-            }
-        }
-    }
-    core.info(`Track B: ${eligible.length} symbols → ${impactedFiles.length} impacted files (${filesSearched} files searched)`);
-    return { impactedFiles, filesSearched, capHit: false, runtimeMs: Date.now() - start };
-}
-function toRelative(absPath, repoRoot) {
-    return absPath.startsWith(repoRoot + '/')
-        ? absPath.slice(repoRoot.length + 1)
-        : absPath;
-}
-
-
-/***/ }),
-
 /***/ 2613:
 /***/ ((module) => {
 
@@ -42002,7 +42155,7 @@ module.exports = parseParams
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(6866);
+/******/ 	var __webpack_exports__ = __nccwpck_require__(5836);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()

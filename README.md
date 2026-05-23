@@ -236,14 +236,17 @@ Multiple values: `focus: logical-errors,security,error-handling`
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `skip-patterns` | `` | Comma-separated globs for files to skip (lock files, snapshots, generated code). |
+| `include-patterns` | `` | Comma-separated globs. When set, only changed files matching at least one pattern are sent to the LLM. Applied before `skip-patterns`. Example: `"src/**,lib/**"` to scope review to source directories only. |
+| `skip-patterns` | `` | Comma-separated globs for files to exclude (lock files, snapshots, generated code). |
 | `skip-label` | `skip-ai-review` | PR label that disables AI Review for that PR. |
+| `budget-usd` | `0` | Max spend per run in USD. Checked before each batch of 5 files; remaining files are listed as skipped-budget in the comment. `0` = unlimited. |
 | `min-file-diff-lines` | `1` | Files with fewer changed lines than this are skipped. |
 | `min-pr-diff-lines` | `1` | PRs with fewer total changed lines than this skip AI Review entirely. |
 | `max-file-tokens` | `32000` | Files whose diff exceeds this token estimate are skipped. |
 | `timeout-seconds` | `30` | Per-file LLM call timeout. Timed-out files are noted in the comment. |
 | `allow-private-networks` | `false` | Set `true` to allow `api-url` pointing to a private IP (Ollama, vLLM on a LAN). |
 | `post-as-comment` | `true` | Set `false` to print findings to the Actions log instead of posting a PR comment. |
+| `inline-comments` | `false` | Set `true` to post findings as GitHub inline review comments attached to the diff line. Findings without a line number, or whose line falls outside the diff hunk, fall back to the main comment. Requires `post-as-comment: true`. |
 
 ### Example AI Review comment
 
@@ -263,6 +266,14 @@ Wrong pagination cursor: `trades[0]!.id` points to the first item in the current
 not the last. The next page would re-fetch overlapping results.
 Fix: use `trades[trades.length - 1]!.id` (or `trades.at(-1)!.id`).
 ```
+
+---
+
+## Fork PR support
+
+Ripple partially works on fork PRs. GitHub does not grant write access to fork PRs on the default `pull_request` trigger, so Ripple **cannot post comments or request reviewers**. When a fork PR is detected, Ripple logs a warning to the Actions run and exits cleanly — it will not error your CI.
+
+Full fork PR support (review comments + reviewer requests from forked contributor PRs) requires a two-workflow `pull_request_target` setup. This is planned for a future release.
 
 ---
 

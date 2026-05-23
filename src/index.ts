@@ -12,13 +12,14 @@ import { extractChangedSymbols } from './symbol-extract'
 import { resolveOwners } from './owner-resolver'
 import { applyOwnerSafetyRules } from './owner-safety'
 import { isBranchProtected } from './branch-check'
-import { formatReport } from './comment-formatter'
+import { formatReport, getReportCommentMarker } from './comment-formatter'
 import { upsertComment } from './comment'
 import { requestReviews } from './review-requester'
 import { isBotAuthor } from './bot-detect'
 import { splitFiles, checkPrMinLines } from './file-splitter'
 import { runAiReview } from './ai-review'
 import { formatAiReview, AI_REVIEW_MARKER } from './ai-review-formatter'
+import { postInlineReview } from './inline-review'
 
 type Octokit = ReturnType<typeof github.getOctokit>
 
@@ -67,6 +68,7 @@ function loadAiReviewConfig(repoRoot: string): { config: AiReviewConfig; hasOwne
     model,
     focus: String(aiReview['focus'] ?? 'logical-errors,error-handling').split(',').map(s => s.trim()),
     skipPatterns: String(aiReview['skip-patterns'] ?? '').split(',').map(s => s.trim()).filter(Boolean),
+    includePatterns: String(aiReview['include-patterns'] ?? '').split(',').map(s => s.trim()).filter(Boolean),
     skipLabel: String(aiReview['skip-label'] ?? 'skip-ai-review'),
     minFileDiffLines: Number(aiReview['min-file-diff-lines'] ?? 1),
     minPrDiffLines: Number(aiReview['min-pr-diff-lines'] ?? 1),
@@ -74,6 +76,7 @@ function loadAiReviewConfig(repoRoot: string): { config: AiReviewConfig; hasOwne
     timeoutSeconds: Number(aiReview['timeout-seconds'] ?? 30),
     allowPrivateNetworks: aiReview['allow-private-networks'] === true,
     postAsComment: aiReview['post-as-comment'] !== false,
+    inlineComments: aiReview['inline-comments'] === true,
     budgetUsd: Number(aiReview['budget-usd'] ?? 0),
   }
 
@@ -86,7 +89,6 @@ async function runAiReviewPipeline(
   repo: string,
   pullNumber: number,
   allChanged: ChangedFile[],
-  allImpacted: ImpactedFile[],
   config: AiReviewConfig,
   apiKey: string,
   commitSha: string,
@@ -103,8 +105,10 @@ async function runAiReviewPipeline(
     return
   }
 
-  const impactedPaths = hasOwnerRouting ? allImpacted.map(f => f.path) : null
-  const fileDiffs = splitFiles(allChanged, config, impactedPaths)
+  // AI Review always operates on the PR's changed files, not the downstream
+  // impacted set. The impacted set tracks callers of the changed code —
+  // those are correct for owner routing but wrong for code review.
+  const fileDiffs = splitFiles(allChanged, config, null)
 
   if (fileDiffs.length === 0) {
     core.info('ai-review: no files to review after filtering')
@@ -126,7 +130,22 @@ async function runAiReviewPipeline(
   })
 
   const filesReviewed = fileDiffs.length - skippedFiles.length - timedOutFiles.length - budgetExceededFiles.length
-  const commentBody = formatAiReview(findings, config.model, commitSha, filesReviewed, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd)
+
+  let commentFindings = findings
+  let inlinedCount = 0
+
+  if (config.inlineComments) {
+    const { inlined, fallback } = await postInlineReview(
+      octokit, owner, repo, pullNumber, commitSha, findings, fileDiffs
+    )
+    inlinedCount = inlined.length
+    commentFindings = fallback
+  }
+
+  const commentBody = formatAiReview(
+    commentFindings, config.model, commitSha, filesReviewed,
+    skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd, inlinedCount
+  )
 
   if (config.postAsComment) {
     await upsertComment(octokit, owner, repo, pullNumber, commentBody, 'ai-review')
@@ -158,6 +177,37 @@ async function run(): Promise<void> {
     const prLabels: string[] = ((pr.labels as Array<{ name: string }>) ?? []).map(l => l.name)
 
     core.info(`Ripple: PR #${pullNumber} by @${prAuthor} → ${baseBranch}`)
+
+    // Detect fork PRs — GitHub gives read-only tokens for these on the default
+    // pull_request trigger. Ripple cannot post comments or request reviews.
+    const headRepoFullName = (pr.head as { repo?: { full_name?: string } }).repo?.full_name
+    if (headRepoFullName && headRepoFullName !== `${owner}/${repo}`) {
+      core.warning(
+        `Ripple: PR is from a fork (${headRepoFullName}). ` +
+        `GitHub does not grant write access for fork PRs on the pull_request trigger — ` +
+        `review requests and comments are unavailable. ` +
+        `See https://github.com/${owner}/${repo}#fork-pr-support for the two-workflow setup.`
+      )
+      try {
+        const forkBody = [
+          getReportCommentMarker(),
+          '## Ripple',
+          '',
+          '> ⚠ **Fork PR — limited functionality**',
+          '>',
+          `> This PR comes from a fork (\`${headRepoFullName}\`). GitHub does not grant write access`,
+          '> for fork PRs on the default `pull_request` trigger, so Ripple cannot post review',
+          '> findings or request reviewers.',
+          '>',
+          '> To enable full Ripple support on fork PRs, use the `pull_request_target` two-workflow',
+          `> setup — see the [Ripple docs](https://github.com/${owner}/${repo}#fork-pr-support).`,
+        ].join('\n')
+        await upsertComment(octokit, owner, repo, pullNumber, forkBody)
+      } catch {
+        core.info('Ripple: could not post fork warning (token is read-only) — check Actions log')
+      }
+      return
+    }
 
     // 1. Fetch diff
     const allChanged = await getChangedFiles(octokit, owner, repo, pullNumber)
@@ -255,7 +305,7 @@ async function run(): Promise<void> {
       } else {
         await runAiReviewPipeline(
           octokit, owner, repo, pullNumber,
-          allChanged, allImpacted,
+          allChanged,
           aiReview.config, aiApiKey, commitSha,
           aiReview.hasOwnerRouting, prLabels
         )

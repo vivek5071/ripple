@@ -67,35 +67,23 @@
 
 ## P2 — AI Review follow-ups (V1.1)
 
-### Budget cap (`budget-usd`)
-**What:** Add a `budget-usd` key to the `ai-review:` block. Track cumulative estimated cost (input + output tokens × known per-token prices) across the file batch. Stop sending more files once the cap is hit and note the remaining files as skipped-budget in the comment.
-
-**Why:** Without a cap, a 300-file PR at $0.003/file = $0.90 per run. Teams will add a budget cap before wide rollout.
-
-**Effort:** S (human: ~2 hours / CC: ~20 min)
-**Priority:** P2
+### ~~Budget cap (`budget-usd`)~~ ~~DONE (2026-05-23)~~
+~~`budget-usd` in `.ripple.yml` `ai-review:` block. Checked before each batch of 5 files. Remaining files listed as "N over budget" in comment footer. 0 = unlimited.~~
 
 ---
 
-### Inline suggestion mode (GitHub Review API)
-**What:** Instead of (or alongside) a comment, post findings as GitHub inline code review comments attached to the exact diff line. Uses the GitHub Pull Requests Review API with `COMMENT` event.
-
-**Why:** Inline comments are more actionable — developers see the note right next to the code. Current comment format is good for scanning but requires manual navigation.
-
-**Cons:** GitHub limits inline comments to lines present in the unified diff. Lines outside the diff window can't be annotated.
-
-**Effort:** M (human: ~3 hours / CC: ~30 min)
-**Priority:** P2
+### ~~`include-patterns` (file whitelist)~~ ~~DONE (2026-05-23)~~
+~~`include-patterns` in `.ripple.yml` `ai-review:` block. Comma-separated globs. Only changed files matching at least one pattern are sent to the LLM. Applied before `skip-patterns`. Empty = all files.~~
 
 ---
 
-### Cost footer in AI Review comment
-**What:** Append a one-line footer to the AI Review comment showing estimated cost and tokens: `> ~$0.04 · 12k input tokens · 800 output tokens`.
+### ~~Inline suggestion mode (GitHub Review API)~~ ~~DONE (2026-05-23)~~
+~~`inline-comments: true` in `.ripple.yml` `ai-review:` block. Posts findings via `createReview` (COMMENT event) attached to the diff line. Findings without a line number or outside the diff hunk fall back to the main comment. If the API call fails, all findings fall back gracefully. Footer shows "N inline" count.~~
 
-**Why:** Teams want to understand ongoing API spend. Keeps cost visible without requiring a separate dashboard.
+---
 
-**Effort:** XS (human: ~30 min / CC: ~10 min)
-**Priority:** P2
+### ~~Cost footer in AI Review comment~~ ~~DONE (2026-05-23)~~
+~~Footer appended to AI Review comment: `~$0.0031 · 12k input · 800 output`. Uses exact token counts from API response.~~
 
 ---
 

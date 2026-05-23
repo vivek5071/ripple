@@ -17,6 +17,10 @@ export function splitFiles(
 
   candidates = candidates.filter(f => f.status !== 'removed' && f.patch)
 
+  if (config.includePatterns.length > 0) {
+    candidates = candidates.filter(f => micromatch.isMatch(f.path, config.includePatterns))
+  }
+
   if (config.skipPatterns.length > 0) {
     candidates = candidates.filter(f => !micromatch.isMatch(f.path, config.skipPatterns))
   }

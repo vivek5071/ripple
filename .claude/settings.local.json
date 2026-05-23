@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp /home/pc/Desktop/fresh/design-blast-radius.md ~/.gstack/projects/fresh/pc-unknown-design-20260522-001248.md && echo \"synced\")"
+    ],
+    "additionalDirectories": [
+      "/home/pc/.gstack/projects/fresh"
+    ]
+  }
+}

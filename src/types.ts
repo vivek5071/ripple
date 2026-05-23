@@ -42,6 +42,7 @@ export interface AiReviewConfig {
   model: string
   focus: string[]
   skipPatterns: string[]
+  includePatterns: string[]
   skipLabel: string
   minFileDiffLines: number
   minPrDiffLines: number
@@ -49,6 +50,7 @@ export interface AiReviewConfig {
   timeoutSeconds: number
   allowPrivateNetworks: boolean
   postAsComment: boolean
+  inlineComments: boolean
   budgetUsd: number  // 0 = unlimited
 }
 
