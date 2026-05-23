@@ -37,8 +37,25 @@ inputs:
     default: ''
 
 runs:
-  using: 'node20'
-  main: 'dist/index.js'
+  using: 'composite'
+  steps:
+    - name: Install ripgrep
+      shell: bash
+      run: |
+        if ! command -v rg &> /dev/null; then
+          sudo apt-get install -y ripgrep
+        fi
+    - name: Run Ripple
+      shell: bash
+      env:
+        INPUT_GITHUB-TOKEN: ${{ inputs.github-token }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_MIN-SYMBOL-LENGTH: ${{ inputs.min-symbol-length }}
+        INPUT_MAX-FILES-TO-SEARCH: ${{ inputs.max-files-to-search }}
+        INPUT_MAX-OWNERS-PER-PR: ${{ inputs.max-owners-per-pr }}
+        INPUT_TEAM-LEAD: ${{ inputs.team-lead }}
+        INPUT_BOT-PATTERNS: ${{ inputs.bot-patterns }}
+      run: node ${{ github.action_path }}/dist/index.js
 
 branding:
   icon: 'radio'
