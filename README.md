@@ -154,6 +154,8 @@ VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?ite
 
 ## Example PR comment
 
+![Ripple Report showing downstream owners notified on a real PR](docs/ripple-report-demo.png)
+
 ```
 ## Ripple Report
 
