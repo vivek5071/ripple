@@ -65,6 +65,40 @@
 
 ---
 
+## P2 — AI Review follow-ups (V1.1)
+
+### Budget cap (`budget-usd`)
+**What:** Add a `budget-usd` key to the `ai-review:` block. Track cumulative estimated cost (input + output tokens × known per-token prices) across the file batch. Stop sending more files once the cap is hit and note the remaining files as skipped-budget in the comment.
+
+**Why:** Without a cap, a 300-file PR at $0.003/file = $0.90 per run. Teams will add a budget cap before wide rollout.
+
+**Effort:** S (human: ~2 hours / CC: ~20 min)
+**Priority:** P2
+
+---
+
+### Inline suggestion mode (GitHub Review API)
+**What:** Instead of (or alongside) a comment, post findings as GitHub inline code review comments attached to the exact diff line. Uses the GitHub Pull Requests Review API with `COMMENT` event.
+
+**Why:** Inline comments are more actionable — developers see the note right next to the code. Current comment format is good for scanning but requires manual navigation.
+
+**Cons:** GitHub limits inline comments to lines present in the unified diff. Lines outside the diff window can't be annotated.
+
+**Effort:** M (human: ~3 hours / CC: ~30 min)
+**Priority:** P2
+
+---
+
+### Cost footer in AI Review comment
+**What:** Append a one-line footer to the AI Review comment showing estimated cost and tokens: `> ~$0.04 · 12k input tokens · 800 output tokens`.
+
+**Why:** Teams want to understand ongoing API spend. Keeps cost visible without requiring a separate dashboard.
+
+**Effort:** XS (human: ~30 min / CC: ~10 min)
+**Priority:** P2
+
+---
+
 ## P3 — Future (evaluate after first 10 paying customers)
 
 ### Slack / Teams notification for HIGH risk PRs
