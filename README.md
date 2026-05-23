@@ -1,8 +1,10 @@
 # Ripple
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 **Ripple** runs on every PR, finds which files downstream of your change could break, looks up who owns them, and routes review requests to the right people — automatically.
+
+![Ripple Report showing downstream owners notified on a real PR](docs/ripple-report-demo.png)
 
 Works like the SonarQube report you already know, but for ownership and impact instead of code quality.
 
@@ -154,9 +156,25 @@ VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?ite
 
 ---
 
-## Example PR comment
+## Why not CODEOWNERS?
 
-![Ripple Report showing downstream owners notified on a real PR](docs/ripple-report-demo.png)
+CODEOWNERS assigns reviewers based on who *wrote* the changed files. Ripple assigns reviewers based on who *consumes* the changed files downstream.
+
+| | CODEOWNERS | Ripple |
+|---|---|---|
+| **Who gets notified** | Authors of changed files | Owners of files that depend on the change |
+| **Detection method** | File path matching | Symbol extraction + contract file tracking |
+| **Bot PR enforcement** | No | Yes — auto-gates bot PRs |
+| **Fallback when no owner** | Silent | git blame → GitHub Search API |
+| **Advisory mode** | No | Yes — report without blocking |
+
+Use CODEOWNERS if you want to control who can approve changes to specific files. Use Ripple if you want to notify the people whose code could break because of a change they didn't touch.
+
+They are complementary — you can run both.
+
+---
+
+## Example PR comment
 
 ```
 ## Ripple Report
