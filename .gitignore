@@ -1,5 +1,5 @@
 node_modules/
-dist/
-*.js.map
+dist/*
+!dist/index.js
 coverage/
 .env

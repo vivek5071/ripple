@@ -1,15 +1,8 @@
-// T6 — Owner safety logic
-// 1. Deduplicates owners (one section per handle, all their files grouped).
-// 2. Removes PR author from review requests (prevents deadlock).
-// 3. Substitutes team-lead when PR author is the sole owner of every impacted file.
-// 4. If unique owner count > maxOwnersPerPr, falls back to advisory for this run.
-// Implemented in T6 (Lane B).
-
 import type { ResolvedOwner } from './types'
 
 export interface SafetyResult {
   owners: ResolvedOwner[]
-  capHit: boolean     // true when owner count exceeded maxOwnersPerPr
+  capHit: boolean
   authorSkipped: boolean
   teamLeadSubstituted: boolean
 }
@@ -20,7 +13,35 @@ export function applyOwnerSafetyRules(
   teamLead: string,
   maxOwnersPerPr: number
 ): SafetyResult {
-  // TODO (T6): dedup, author exclusion, team-lead substitution, cap check
-  void owners; void prAuthor; void teamLead; void maxOwnersPerPr
-  return { owners: [], capHit: false, authorSkipped: false, teamLeadSubstituted: false }
+  // 1. Dedup: merge files for duplicate handles
+  const byHandle = new Map<string, ResolvedOwner>()
+  for (const owner of owners) {
+    const existing = byHandle.get(owner.handle)
+    if (existing) {
+      existing.files = [...new Set([...existing.files, ...owner.files])]
+    } else {
+      byHandle.set(owner.handle, { ...owner, files: [...owner.files] })
+    }
+  }
+
+  // 2. Remove PR author
+  const authorOwner = byHandle.get(prAuthor)
+  const authorSkipped = authorOwner != null
+  byHandle.delete(prAuthor)
+
+  // 3. Substitute team-lead when author was the sole owner and all owners are gone
+  let teamLeadSubstituted = false
+  if (byHandle.size === 0 && teamLead && authorOwner && authorOwner.files.length > 0) {
+    byHandle.set(teamLead, {
+      handle: teamLead,
+      files: authorOwner.files,
+      resolvedVia: 'yaml',
+    })
+    teamLeadSubstituted = true
+  }
+
+  const allOwners = [...byHandle.values()]
+  const capHit = allOwners.length > maxOwnersPerPr
+
+  return { owners: allOwners, capHit, authorSkipped, teamLeadSubstituted }
 }

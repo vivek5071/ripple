@@ -1,5 +1,5 @@
 {
-  "name": "blast-radius",
+  "name": "ripple",
   "version": "0.1.0",
   "description": "Detect downstream-impacted files on PRs and route owners for approval",
   "main": "dist/index.js",
@@ -14,10 +14,12 @@
     "@actions/core": "^1.10.1",
     "@actions/exec": "^1.1.1",
     "@actions/github": "^6.0.0",
+    "js-yaml": "^4.1.1",
     "micromatch": "^4.0.8"
   },
   "packageManager": "pnpm@11.2.2",
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/micromatch": "^4.0.9",
     "@types/node": "^20.0.0",
     "@vercel/ncc": "^0.38.3",

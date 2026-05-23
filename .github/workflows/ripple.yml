@@ -1,0 +1,27 @@
+name: Ripple
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  ripple:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # post comments and request reviews
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for git blame fallback
+
+      - uses: ./  # replace with your-org/ripple@v1 after publishing
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mode: advisory          # change to 'gate' to require owner approvals
+          min-symbol-length: 5
+          max-files-to-search: 50000
+          max-owners-per-pr: 10
+          team-lead: ''           # set to a GitHub handle as fallback owner
+          bot-patterns: ''        # e.g. 'renovate,devin-ai' for bots without [bot] suffix

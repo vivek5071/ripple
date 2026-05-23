@@ -5,12 +5,14 @@ import { getChangedFiles, getSourceFiles } from './diff'
 import { detectContractImpact } from './track-a'
 import { symbolGrep } from './track-b'
 import { detectRenames, getRenamedSymbolCallers } from './rename-detect'
+import { extractChangedSymbols } from './symbol-extract'
 import { resolveOwners } from './owner-resolver'
 import { applyOwnerSafetyRules } from './owner-safety'
 import { isBranchProtected } from './branch-check'
 import { formatReport } from './comment-formatter'
 import { upsertComment } from './comment'
 import { requestReviews } from './review-requester'
+import { isBotAuthor } from './bot-detect'
 
 function getInputs(): ActionInputs {
   return {
@@ -20,6 +22,8 @@ function getInputs(): ActionInputs {
     maxFilesToSearch: parseInt(core.getInput('max-files-to-search') || '50000', 10),
     maxOwnersPerPr: parseInt(core.getInput('max-owners-per-pr') || '10', 10),
     teamLead: core.getInput('team-lead') || '',
+    botPatterns: (core.getInput('bot-patterns') || '')
+      .split(',').map(p => p.trim()).filter(Boolean),
   }
 }
 
@@ -43,7 +47,7 @@ async function run(): Promise<void> {
     const baseBranch: string = pr.base.ref
     const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd()
 
-    core.info(`Blast Radius: PR #${pullNumber} by @${prAuthor} → ${baseBranch}`)
+    core.info(`Ripple: PR #${pullNumber} by @${prAuthor} → ${baseBranch}`)
 
     // 1. Fetch diff
     const allChanged = await getChangedFiles(octokit, owner, repo, pullNumber)
@@ -57,9 +61,12 @@ async function run(): Promise<void> {
     // 2. Detect renames (so Track B searches OLD name for renamed symbols)
     const renamedFiles = detectRenames(sourceFiles)
 
-    // 3. Placeholder symbol list — T4/T5 will populate this from AST parsing
-    //    For now: treat each changed source file path as a symbol-bearing unit
-    const changedSymbols = await getRenamedSymbolCallers(renamedFiles, [], repoRoot)
+    // 3. Extract exported symbols from the diff (regex-based, no AST required)
+    const patchSymbols = extractChangedSymbols(sourceFiles)
+    const renamedSymbols = await getRenamedSymbolCallers(renamedFiles, [], repoRoot)
+    const changedSymbols = [...patchSymbols, ...renamedSymbols]
+
+    core.info(`Symbols: ${patchSymbols.length} from patch, ${renamedSymbols.length} from renames`)
 
     // 4. Track A — contract file detection
     const trackAImpact = await detectContractImpact(sourceFiles, repoRoot, inputs.maxFilesToSearch)
@@ -77,7 +84,7 @@ async function run(): Promise<void> {
     const impactedPaths = [...new Set(allImpacted.map(f => f.path))]
 
     // 7. Resolve owners
-    const rawOwners = await resolveOwners(impactedPaths, repoRoot)
+    const rawOwners = await resolveOwners(impactedPaths, repoRoot, octokit)
 
     // 8. Apply safety rules (author exclusion, team-lead fallback, cap)
     const safety = applyOwnerSafetyRules(
@@ -87,7 +94,11 @@ async function run(): Promise<void> {
       inputs.maxOwnersPerPr
     )
 
-    const advisoryMode = inputs.mode === 'advisory' || safety.capHit
+    const botPr = isBotAuthor(prAuthor, inputs.botPatterns)
+    if (botPr) core.info(`Bot PR detected (@${prAuthor}) — forcing gate mode`)
+
+    // advisory when: owner cap hit, OR (not a bot PR AND configured as advisory)
+    const advisoryMode = safety.capHit || (!botPr && inputs.mode === 'advisory')
 
     // 9. Branch protection check
     const branchProtected = await isBranchProtected(octokit, owner, repo, baseBranch)
@@ -107,10 +118,11 @@ async function run(): Promise<void> {
       branchProtectionConfigured: branchProtected,
       runtimeMs: Date.now() - startTime,
       filesSearched: trackBResult.filesSearched,
+      botAuthor: botPr,
     }
 
     core.info(
-      `Blast Radius complete: ${report.impactedFiles.length} impacted files, ` +
+      `Ripple complete: ${report.impactedFiles.length} impacted files, ` +
       `${report.owners.length} owners, ${report.runtimeMs}ms`
     )
 

@@ -29,7 +29,7 @@ export async function upsertComment(
       comment_id: existing.id,
       body,
     })
-    core.info(`Updated existing blast radius comment #${existing.id}`)
+    core.info(`Updated existing ripple comment #${existing.id}`)
   } else {
     await octokit.rest.issues.createComment({
       owner,
@@ -37,6 +37,6 @@ export async function upsertComment(
       issue_number: pullNumber,
       body,
     })
-    core.info('Created blast radius comment')
+    core.info('Created ripple comment')
   }
 }

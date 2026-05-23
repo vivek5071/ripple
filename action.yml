@@ -1,6 +1,6 @@
-name: 'Blast Radius'
+name: 'Ripple'
 description: 'Detect downstream-impacted files on PRs and route owners for approval'
-author: 'blast-radius'
+author: 'ripple'
 
 inputs:
   github-token:
@@ -25,6 +25,14 @@ inputs:
     default: '10'
   team-lead:
     description: 'GitHub handle substituted when the PR author is the sole owner of every impacted file.'
+    required: false
+    default: ''
+  bot-patterns:
+    description: >
+      Comma-separated glob patterns for bot author handles that lack the [bot] suffix
+      (e.g. 'renovate,devin-ai,my-deploy-bot'). GitHub App bots ending in [bot] are
+      always detected automatically and do not need to be listed here. Matched bot PRs
+      are forced into gate mode regardless of the mode input.
     required: false
     default: ''
 

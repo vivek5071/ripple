@@ -1,8 +1,4 @@
-// T8 — Branch protection detection
-// Checks if the base branch has protection rules configured.
-// If not, the PR comment shows a one-time setup banner.
-// Implemented in T8 (Lane C).
-
+import * as core from '@actions/core'
 import { getOctokit } from '@actions/github'
 
 type Octokit = ReturnType<typeof getOctokit>
@@ -13,8 +9,14 @@ export async function isBranchProtected(
   repo: string,
   branch: string
 ): Promise<boolean> {
-  // TODO (T8): GET /repos/{owner}/{repo}/branches/{branch}
-  // Returns false on 404/403 (no protection or no permission to check)
-  void octokit; void owner; void repo; void branch
-  return true  // assume protected until T8 is implemented; avoids false banners
+  try {
+    await octokit.rest.repos.getBranchProtection({ owner, repo, branch })
+    return true
+  } catch (err: unknown) {
+    const status = (err as { status?: number }).status
+    if (status === 404) return false          // no protection rules configured
+    if (status === 403) return false          // no admin permission — treat as unprotected
+    core.warning(`Branch protection check failed: ${err instanceof Error ? err.message : String(err)}`)
+    return true  // assume protected on network/auth errors to avoid false banners
+  }
 }

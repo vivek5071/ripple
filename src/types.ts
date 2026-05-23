@@ -5,6 +5,7 @@ export interface ActionInputs {
   maxFilesToSearch: number
   maxOwnersPerPr: number
   teamLead: string
+  botPatterns: string[]
 }
 
 export interface ChangedFile {
@@ -47,4 +48,5 @@ export interface BlastRadiusReport {
   branchProtectionConfigured: boolean
   runtimeMs: number
   filesSearched: number
+  botAuthor: boolean         // true when prAuthor matched a bot pattern
 }

@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=./ripple.schema.json
+paths:
+  'src/ripgrep.ts': vivekkumardev8
+  'src/track-a.ts': vivekkumardev8
+  'src/track-b.ts': vivekkumardev8
+  'src/symbol-extract.ts': vivekkumardev8
+  'src/diff.ts': vivekkumardev8
+  'src/index.ts': vivekkumardev8
+  'src/**': vivekkumardev8

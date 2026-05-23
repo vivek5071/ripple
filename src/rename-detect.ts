@@ -1,8 +1,4 @@
-// T10 — Rename detection
-// When git diff shows a file rename, searches for callers of the OLD symbol
-// name. Those callers are genuinely broken — the PR author forgot to update them.
-// Implemented in T10 (Lane A).
-
+import * as path from 'path'
 import type { ChangedFile, ChangedSymbol } from './types'
 
 export function detectRenames(changedFiles: ChangedFile[]): ChangedFile[] {
@@ -12,10 +8,46 @@ export function detectRenames(changedFiles: ChangedFile[]): ChangedFile[] {
 export async function getRenamedSymbolCallers(
   renamedFiles: ChangedFile[],
   allSymbols: ChangedSymbol[],
-  repoRoot: string
+  _repoRoot: string
 ): Promise<ChangedSymbol[]> {
-  // TODO (T10): for each renamed symbol, set isRename=true and oldName so
-  // Track B searches the old name instead of the new one.
-  void renamedFiles; void allSymbols; void repoRoot
-  return []
+  const symbols: ChangedSymbol[] = []
+
+  for (const file of renamedFiles) {
+    if (!file.previousPath) continue
+
+    const oldStem = path.basename(file.previousPath).replace(/\.[^.]+$/, '')
+    const newStem = path.basename(file.path).replace(/\.[^.]+$/, '')
+
+    symbols.push({
+      name: newStem,
+      oldName: oldStem,
+      file: file.path,
+      language: languageFromPath(file.path),
+      isRename: true,
+    })
+  }
+
+  for (const sym of allSymbols) {
+    if (sym.isRename && sym.oldName) {
+      symbols.push(sym)
+    }
+  }
+
+  return symbols
+}
+
+function languageFromPath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase()
+  const map: Record<string, string> = {
+    '.ts': 'typescript', '.tsx': 'typescript',
+    '.js': 'javascript', '.jsx': 'javascript',
+    '.py': 'python',
+    '.rb': 'ruby',
+    '.go': 'go',
+    '.java': 'java',
+    '.rs': 'rust',
+    '.cs': 'csharp',
+    '.php': 'php',
+  }
+  return map[ext] ?? 'unknown'
 }

@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ripple/ripple/blob/main/ripple.schema.json",
+  "title": "Ripple ownership config",
+  "description": "Defines file ownership for the ripple GitHub Action. Place this file at .ripple.yml in your repository root.",
+  "type": "object",
+  "properties": {
+    "paths": {
+      "type": "object",
+      "description": "Map of micromatch glob patterns to owner GitHub handle(s). Patterns are evaluated in order; the first match wins. Handles must not include the @ prefix.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "description": "Single owner GitHub handle (e.g. 'alice')"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Multiple owner GitHub handles (e.g. ['alice', 'bob'])"
+          }
+        ]
+      },
+      "examples": [
+        {
+          "src/api/**": "alice",
+          "src/db/**": ["bob", "charlie"],
+          "src/auth/**": "carol"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "paths": {
+        "src/api/**": "alice",
+        "src/db/**": ["bob", "charlie"],
+        "src/auth/**": "carol",
+        "src/shared/**": ["alice", "carol"]
+      }
+    }
+  ]
+}
