@@ -186,6 +186,8 @@ paths:
 
 Ripple can call any OpenAI-compatible LLM to review the diff for logical errors, security issues, and missing error handling — and post the findings as a separate comment on the PR.
 
+![AI Review comment showing 2 logical errors caught on a real PR](docs/ai-review-demo.png)
+
 ### 1. Enable in `.ripple.yml`
 
 ```yaml
