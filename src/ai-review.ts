@@ -2,6 +2,22 @@ import * as core from '@actions/core'
 import { sanitizeDiff } from './secret-sanitizer'
 import type { FileDiff, Finding, ReviewOptions } from './types'
 
+// Cost per 1M tokens [input, output]. Unknown models use the conservative fallback.
+const MODEL_PRICING: Record<string, [number, number]> = {
+  'gpt-4o':                   [2.50, 10.00],
+  'gpt-4o-mini':              [0.15,  0.60],
+  'gpt-4-turbo':              [10.00, 30.00],
+  'llama-3.3-70b-versatile':  [0.59,  0.79],
+  'llama-3.1-70b-versatile':  [0.59,  0.79],
+  'mixtral-8x7b-32768':       [0.24,  0.24],
+}
+const FALLBACK_PRICING: [number, number] = [5.00, 15.00]
+
+function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
+  const [inputPer1M, outputPer1M] = MODEL_PRICING[model] ?? FALLBACK_PRICING
+  return (promptTokens / 1_000_000) * inputPer1M + (completionTokens / 1_000_000) * outputPer1M
+}
+
 const FOCUS_MAP: Record<string, string> = {
   'logical-errors': 'logical errors and incorrect behavior',
   'security': 'security vulnerabilities, injection risks, and exposed secrets',
@@ -136,6 +152,12 @@ async function callLlmWithFormat(
   }
 }
 
+interface LlmResponse {
+  content: string
+  promptTokens: number
+  completionTokens: number
+}
+
 async function callLlm(
   apiUrl: string,
   apiKey: string,
@@ -143,7 +165,7 @@ async function callLlm(
   systemPrompt: string,
   userContent: string,
   timeoutMs: number
-): Promise<string> {
+): Promise<LlmResponse> {
   const modes: ResponseFormatMode[] = ['json_schema', 'json_object', 'none']
 
   let response: Response | undefined
@@ -162,8 +184,15 @@ async function callLlm(
   if (response!.status === 429) throw new Error('ai-review: rate limited (429)')
   if (!response!.ok) throw new Error(`ai-review: LLM request failed with status ${response!.status}`)
 
-  const data = await response!.json() as { choices?: Array<{ message?: { content?: string } }> }
-  return data.choices?.[0]?.message?.content ?? ''
+  const data = await response!.json() as {
+    choices?: Array<{ message?: { content?: string } }>
+    usage?: { prompt_tokens?: number; completion_tokens?: number }
+  }
+  return {
+    content: data.choices?.[0]?.message?.content ?? '',
+    promptTokens: data.usage?.prompt_tokens ?? 0,
+    completionTokens: data.usage?.completion_tokens ?? 0,
+  }
 }
 
 function parseFindings(content: string, filePath: string): Finding[] {
@@ -188,6 +217,11 @@ function parseFindings(content: string, filePath: string): Finding[] {
   return []
 }
 
+interface FileReviewResult {
+  findings: Finding[]
+  costUsd: number
+}
+
 async function reviewFileWithRetry(
   file: FileDiff,
   apiUrl: string,
@@ -196,7 +230,7 @@ async function reviewFileWithRetry(
   systemPrompt: string,
   timeoutMs: number,
   retryLimit: number
-): Promise<Finding[]> {
+): Promise<FileReviewResult> {
   const { sanitized, redactedCount } = sanitizeDiff(file.diff)
   if (redactedCount > 0) {
     core.info(`ai-review: redacted ${redactedCount} potential secret(s) in ${file.path}`)
@@ -213,9 +247,10 @@ async function reviewFileWithRetry(
       core.info(`ai-review: retrying ${file.path} (attempt ${attempt + 1})`)
     }
     try {
-      const content = await callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs)
-      if (!content) return []
-      return parseFindings(content, file.path)
+      const { content, promptTokens, completionTokens } = await callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeoutMs)
+      const costUsd = estimateCost(model, promptTokens, completionTokens)
+      if (!content) return { findings: [], costUsd }
+      return { findings: parseFindings(content, file.path), costUsd }
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err))
       if (!lastErr.message.includes('429') && !lastErr.message.includes('aborted')) break
@@ -228,6 +263,8 @@ export interface ReviewResult {
   findings: Finding[]
   skippedFiles: string[]
   timedOutFiles: string[]
+  budgetExceededFiles: string[]
+  totalCostUsd: number
 }
 
 export async function runAiReview(options: ReviewOptions): Promise<ReviewResult> {
@@ -241,9 +278,18 @@ export async function runAiReview(options: ReviewOptions): Promise<ReviewResult>
   const allFindings: Finding[] = []
   const skippedFiles: string[] = []
   const timedOutFiles: string[] = []
+  const budgetExceededFiles: string[] = []
+  let totalCostUsd = 0
   const maxConcurrent = 5
 
   for (let i = 0; i < files.length; i += maxConcurrent) {
+    if (config.budgetUsd > 0 && totalCostUsd >= config.budgetUsd) {
+      const remaining = files.slice(i).map(f => f.path)
+      budgetExceededFiles.push(...remaining)
+      core.warning(`ai-review: budget cap $${config.budgetUsd} reached — skipping ${remaining.length} file(s)`)
+      break
+    }
+
     const batch = files.slice(i, i + maxConcurrent)
     const results = await Promise.allSettled(
       batch.map(f => reviewFileWithRetry(f, apiUrl, apiKey, config.model, systemPrompt, timeoutMs, 2))
@@ -253,7 +299,8 @@ export async function runAiReview(options: ReviewOptions): Promise<ReviewResult>
       const r = results[j]
       const file = batch[j]
       if (r.status === 'fulfilled') {
-        allFindings.push(...r.value)
+        allFindings.push(...r.value.findings)
+        totalCostUsd += r.value.costUsd
       } else {
         const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
         if (msg.includes('aborted') || msg.includes('timed out')) {
@@ -267,5 +314,5 @@ export async function runAiReview(options: ReviewOptions): Promise<ReviewResult>
     }
   }
 
-  return { findings: allFindings, skippedFiles, timedOutFiles }
+  return { findings: allFindings, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd }
 }

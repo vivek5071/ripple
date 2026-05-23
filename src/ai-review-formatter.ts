@@ -15,7 +15,9 @@ export function formatAiReview(
   commitSha: string,
   filesReviewed: number,
   skippedFiles: string[],
-  timedOutFiles: string[]
+  timedOutFiles: string[],
+  budgetExceededFiles: string[],
+  totalCostUsd: number
 ): string {
   const lines: string[] = [AI_REVIEW_MARKER, '## AI Review', '']
 
@@ -52,6 +54,8 @@ export function formatAiReview(
     `${filesReviewed} file${filesReviewed === 1 ? '' : 's'} reviewed`,
   ]
   if (totalSkipped > 0) footerParts.push(`${totalSkipped} skipped`)
+  if (budgetExceededFiles.length > 0) footerParts.push(`${budgetExceededFiles.length} over budget`)
+  if (totalCostUsd > 0) footerParts.push(`~$${totalCostUsd.toFixed(4)}`)
   lines.push(`> ${footerParts.join(' · ')}`)
 
   return lines.join('\n')

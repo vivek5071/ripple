@@ -74,6 +74,7 @@ function loadAiReviewConfig(repoRoot: string): { config: AiReviewConfig; hasOwne
     timeoutSeconds: Number(aiReview['timeout-seconds'] ?? 30),
     allowPrivateNetworks: aiReview['allow-private-networks'] === true,
     postAsComment: aiReview['post-as-comment'] !== false,
+    budgetUsd: Number(aiReview['budget-usd'] ?? 0),
   }
 
   return { config, hasOwnerRouting }
@@ -117,15 +118,15 @@ async function runAiReviewPipeline(
     await upsertComment(octokit, owner, repo, pullNumber, statusBody, 'ai-review')
   }
 
-  const { findings, skippedFiles, timedOutFiles } = await runAiReview({
+  const { findings, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd } = await runAiReview({
     config,
     apiKey,
     files: fileDiffs,
     commitSha,
   })
 
-  const filesReviewed = fileDiffs.length - skippedFiles.length - timedOutFiles.length
-  const commentBody = formatAiReview(findings, config.model, commitSha, filesReviewed, skippedFiles, timedOutFiles)
+  const filesReviewed = fileDiffs.length - skippedFiles.length - timedOutFiles.length - budgetExceededFiles.length
+  const commentBody = formatAiReview(findings, config.model, commitSha, filesReviewed, skippedFiles, timedOutFiles, budgetExceededFiles, totalCostUsd)
 
   if (config.postAsComment) {
     await upsertComment(octokit, owner, repo, pullNumber, commentBody, 'ai-review')

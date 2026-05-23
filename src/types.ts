@@ -49,6 +49,7 @@ export interface AiReviewConfig {
   timeoutSeconds: number
   allowPrivateNetworks: boolean
   postAsComment: boolean
+  budgetUsd: number  // 0 = unlimited
 }
 
 export interface FileDiff {
