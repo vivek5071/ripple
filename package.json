@@ -4,7 +4,7 @@
   "description": "Detect downstream-impacted files on PRs and route owners for approval",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && ncc build dist/index.js -o dist --source-map --license licenses.txt",
+    "build": "tsc && ncc build dist/index.js -o dist --license licenses.txt",
     "build:dev": "tsc",
     "lint": "eslint src/**/*.ts",
     "test": "jest",
