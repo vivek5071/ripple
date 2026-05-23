@@ -1,6 +1,6 @@
 name: 'Ripple'
 description: 'Detect downstream-impacted files on PRs and route owners for approval'
-author: 'ripple'
+author: 'vivek5071'
 
 inputs:
   github-token:

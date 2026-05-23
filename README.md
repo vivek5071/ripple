@@ -1,5 +1,7 @@
 # Ripple
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Ripple** runs on every PR, finds which files downstream of your change could break, looks up who owns them, and routes review requests to the right people — automatically.
 
 Works like the SonarQube report you already know, but for ownership and impact instead of code quality.
@@ -41,7 +43,7 @@ jobs:
         with:
           fetch-depth: 0  # required for git blame fallback
 
-      - uses: vivek5071/ripple@main
+      - uses: vivek5071/ripple@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mode: advisory
@@ -93,7 +95,7 @@ That's it. Ripple will start posting reports on every PR.
 To enable gate mode:
 
 ```yaml
-- uses: vivek5071/ripple@main
+- uses: vivek5071/ripple@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     mode: gate
@@ -116,7 +118,7 @@ Any GitHub App bot whose handle ends in `[bot]` — for example `github-actions[
 Bots that don't follow the `[bot]` convention:
 
 ```yaml
-- uses: vivek5071/ripple@main
+- uses: vivek5071/ripple@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     mode: advisory
@@ -145,7 +147,7 @@ Files with no owner do not trigger review requests. The PR comment shows them se
 A JSON Schema is included for IDE validation. Add this comment to the top of your `.ripple.yml`:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/vivekkumardev8/ripple/main/ripple.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/vivek5071/ripple/main/ripple.schema.json
 ```
 
 VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) will validate globs and owner values as you type.
@@ -204,7 +206,7 @@ ai-review:
 ### 2. Pass the API key through the workflow
 
 ```yaml
-- uses: vivek5071/ripple@main
+- uses: vivek5071/ripple@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     ai-api-key: ${{ secrets.AI_API_KEY }}
