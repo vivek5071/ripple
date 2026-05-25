@@ -41,6 +41,12 @@ inputs:
       Only required when ai-review.enabled is true in .ripple.yml. Masked in all logs.
     required: false
     default: ''
+  dry-run:
+    description: >
+      When true, runs the full analysis pipeline but skips posting comments and
+      requesting reviews. Useful for testing Ripple locally or in forks without side effects.
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
