@@ -6,6 +6,7 @@ export interface ActionInputs {
   maxOwnersPerPr: number
   teamLead: string
   botPatterns: string[]
+  dryRun: boolean  // when true, posts no comment and requests no reviews — for local testing
 }
 
 export interface ChangedFile {
