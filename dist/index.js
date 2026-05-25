@@ -813,6 +813,7 @@ function getInputs() {
         teamLead: core.getInput('team-lead') || '',
         botPatterns: (core.getInput('bot-patterns') || '')
             .split(',').map(p => p.trim()).filter(Boolean),
+        dryRun: core.getBooleanInput('dry-run'),
     };
 }
 function loadAiReviewConfig(repoRoot) {
@@ -1499,11 +1500,13 @@ async function countRepoFiles(repoRoot) {
     });
     return count;
 }
-async function filesWithMatches(pattern, repoRoot, wordBoundary = false) {
+async function filesWithMatches(pattern, repoRoot, wordBoundary = false, maxResults = 0) {
     const paths = [];
     const args = ['--files-with-matches'];
     if (wordBoundary)
         args.push('--word-regexp');
+    if (maxResults > 0)
+        args.push('--max-count', String(maxResults));
     args.push('--', pattern, repoRoot);
     const code = await exec.exec('rg', args, {
         ignoreReturnCode: true,

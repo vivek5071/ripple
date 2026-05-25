@@ -33,6 +33,7 @@ function getInputs(): ActionInputs {
     teamLead: core.getInput('team-lead') || '',
     botPatterns: (core.getInput('bot-patterns') || '')
       .split(',').map(p => p.trim()).filter(Boolean),
+    dryRun: core.getBooleanInput('dry-run'),
   }
 }
 
