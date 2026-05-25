@@ -68,6 +68,7 @@ runs:
         INPUT_TEAM-LEAD: ${{ inputs.team-lead }}
         INPUT_BOT-PATTERNS: ${{ inputs.bot-patterns }}
         INPUT_AI-API-KEY: ${{ inputs.ai-api-key }}
+        INPUT_DRY-RUN: ${{ inputs.dry-run }}
       run: node ${{ github.action_path }}/dist/index.js
 
 branding:
