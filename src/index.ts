@@ -189,6 +189,10 @@ async function run(): Promise<void> {
         `review requests and comments are unavailable. ` +
         `See https://github.com/${owner}/${repo}#fork-pr-support for the two-workflow setup.`
       )
+      if (inputs.dryRun) {
+        core.info('dry-run: skipping fork-PR warning comment')
+        return
+      }
       try {
         const forkBody = [
           getReportCommentMarker(),
@@ -289,11 +293,21 @@ async function run(): Promise<void> {
 
     // 11. Post Ripple comment
     const commentBody = formatReport(report)
-    await upsertComment(octokit, owner, repo, pullNumber, commentBody)
+    if (inputs.dryRun) {
+      core.info('dry-run: skipping Ripple comment — report follows:\n' + commentBody)
+    } else {
+      await upsertComment(octokit, owner, repo, pullNumber, commentBody)
+    }
 
     // 12. Request reviews in gate mode
     if (!advisoryMode) {
-      await requestReviews(octokit, owner, repo, pullNumber, safety.owners)
+      if (inputs.dryRun) {
+        core.info(
+          `dry-run: would request reviews from ${safety.owners.map(o => `@${o.handle}`).join(', ') || '(none)'}`
+        )
+      } else {
+        await requestReviews(octokit, owner, repo, pullNumber, safety.owners)
+      }
     }
 
     // 13. AI Review (if enabled in .ripple.yml)
@@ -301,7 +315,10 @@ async function run(): Promise<void> {
     const aiApiKey = core.getInput('ai-api-key')
 
     if (aiReview) {
-      if (!aiApiKey) {
+      if (inputs.dryRun) {
+        // AI review both costs API budget and posts comments — skip it wholesale in dry-run
+        core.info('dry-run: skipping AI review')
+      } else if (!aiApiKey) {
         core.warning('ai-review is enabled in .ripple.yml but ai-api-key input is not set — skipping')
       } else {
         await runAiReviewPipeline(
