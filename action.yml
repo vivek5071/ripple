@@ -1,6 +1,9 @@
 name: 'PR Ripple'
 description: 'Detect downstream-impacted files on PRs and route owners for approval'
 author: 'vivek5071'
+branding:
+  icon: 'git-branch'
+  color: 'blue'
 
 inputs:
   github-token:
