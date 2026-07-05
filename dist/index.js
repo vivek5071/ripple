@@ -813,6 +813,7 @@ function getInputs() {
         teamLead: core.getInput('team-lead') || '',
         botPatterns: (core.getInput('bot-patterns') || '')
             .split(',').map(p => p.trim()).filter(Boolean),
+        dryRun: core.getBooleanInput('dry-run'),
     };
 }
 function loadAiReviewConfig(repoRoot) {
@@ -926,6 +927,10 @@ async function run() {
                 `GitHub does not grant write access for fork PRs on the pull_request trigger — ` +
                 `review requests and comments are unavailable. ` +
                 `See https://github.com/${owner}/${repo}#fork-pr-support for the two-workflow setup.`);
+            if (inputs.dryRun) {
+                core.info('dry-run: skipping fork-PR warning comment');
+                return;
+            }
             try {
                 const forkBody = [
                     (0, comment_formatter_1.getReportCommentMarker)(),
@@ -998,16 +1003,30 @@ async function run() {
             `${report.owners.length} owners, ${report.runtimeMs}ms`);
         // 11. Post Ripple comment
         const commentBody = (0, comment_formatter_1.formatReport)(report);
-        await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody);
+        if (inputs.dryRun) {
+            core.info('dry-run: skipping Ripple comment — report follows:\n' + commentBody);
+        }
+        else {
+            await (0, comment_1.upsertComment)(octokit, owner, repo, pullNumber, commentBody);
+        }
         // 12. Request reviews in gate mode
         if (!advisoryMode) {
-            await (0, review_requester_1.requestReviews)(octokit, owner, repo, pullNumber, safety.owners);
+            if (inputs.dryRun) {
+                core.info(`dry-run: would request reviews from ${safety.owners.map(o => `@${o.handle}`).join(', ') || '(none)'}`);
+            }
+            else {
+                await (0, review_requester_1.requestReviews)(octokit, owner, repo, pullNumber, safety.owners);
+            }
         }
         // 13. AI Review (if enabled in .ripple.yml)
         const aiReview = loadAiReviewConfig(repoRoot);
         const aiApiKey = core.getInput('ai-api-key');
         if (aiReview) {
-            if (!aiApiKey) {
+            if (inputs.dryRun) {
+                // AI review both costs API budget and posts comments — skip it wholesale in dry-run
+                core.info('dry-run: skipping AI review');
+            }
+            else if (!aiApiKey) {
                 core.warning('ai-review is enabled in .ripple.yml but ai-api-key input is not set — skipping');
             }
             else {
