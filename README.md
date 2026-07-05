@@ -6,6 +6,8 @@
 
 ![Ripple Report showing downstream owners notified on a real PR](docs/ripple-report-demo.png)
 
+> **See it live:** [ripple-demo PR #1](https://github.com/vivek5071/ripple-demo/pull/1) — a real PR where Ripple scanned the repo and posted this report.
+
 Works like the SonarQube report you already know, but for ownership and impact instead of code quality.
 
 ---
