@@ -19,6 +19,7 @@
   },
   "packageManager": "pnpm@11.2.2",
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/micromatch": "^4.0.9",
     "@types/node": "^20.0.0",
