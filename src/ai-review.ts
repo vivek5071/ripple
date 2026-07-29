@@ -19,12 +19,18 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
 }
 
 const FOCUS_MAP: Record<string, string> = {
-  'logical-errors': 'logical errors and incorrect behavior',
-  'security': 'security vulnerabilities, injection risks, and exposed secrets',
-  'error-handling': 'missing or inadequate error handling and silent failure paths',
+  'logical-errors': 'logical errors and incorrect behavior, including swapped arguments and off-by-one boundaries',
+  'security':
+    'security vulnerabilities: untrusted values interpolated into SQL, shell, or HTML rather than parameterized; ' +
+    'authorization parameters that are accepted but never checked against the resource being acted on; exposed secrets',
+  'error-handling': 'missing or inadequate error handling and silent failure paths, including discarded promise rejections',
   'broken-assumptions': 'broken assumptions about input shape, API contracts, and state',
-  'all': 'all of the above',
 }
+
+// 'all' is deliberately not a key above. It used to map to the literal string
+// "all of the above", which the prompt rendered with no list above it — so the
+// broadest setting gave the model the least guidance. Expand it instead.
+const ALL_FOCUS_AREAS = Object.values(FOCUS_MAP).join('; ')
 
 const FINDING_SCHEMA = {
   type: 'object',
@@ -95,7 +101,7 @@ export function validateApiUrl(rawUrl: string, allowPrivateNetworks: boolean): s
 
 function buildSystemPrompt(focusList: string[]): string {
   const areas = focusList.includes('all')
-    ? FOCUS_MAP['all']
+    ? ALL_FOCUS_AREAS
     : focusList.map(f => FOCUS_MAP[f] ?? f).join('; ')
 
   return [

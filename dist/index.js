@@ -124,12 +124,16 @@ function estimateCost(model, promptTokens, completionTokens) {
     return (promptTokens / 1_000_000) * inputPer1M + (completionTokens / 1_000_000) * outputPer1M;
 }
 const FOCUS_MAP = {
-    'logical-errors': 'logical errors and incorrect behavior',
-    'security': 'security vulnerabilities, injection risks, and exposed secrets',
-    'error-handling': 'missing or inadequate error handling and silent failure paths',
+    'logical-errors': 'logical errors and incorrect behavior, including swapped arguments and off-by-one boundaries',
+    'security': 'security vulnerabilities: untrusted values interpolated into SQL, shell, or HTML rather than parameterized; ' +
+        'authorization parameters that are accepted but never checked against the resource being acted on; exposed secrets',
+    'error-handling': 'missing or inadequate error handling and silent failure paths, including discarded promise rejections',
     'broken-assumptions': 'broken assumptions about input shape, API contracts, and state',
-    'all': 'all of the above',
 };
+// 'all' is deliberately not a key above. It used to map to the literal string
+// "all of the above", which the prompt rendered with no list above it — so the
+// broadest setting gave the model the least guidance. Expand it instead.
+const ALL_FOCUS_AREAS = Object.values(FOCUS_MAP).join('; ');
 const FINDING_SCHEMA = {
     type: 'object',
     required: ['findings'],
@@ -186,7 +190,7 @@ function validateApiUrl(rawUrl, allowPrivateNetworks) {
 }
 function buildSystemPrompt(focusList) {
     const areas = focusList.includes('all')
-        ? FOCUS_MAP['all']
+        ? ALL_FOCUS_AREAS
         : focusList.map(f => FOCUS_MAP[f] ?? f).join('; ');
     return [
         'You are a senior engineer reviewing a pull request diff.',
@@ -694,6 +698,15 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.splitFiles = splitFiles;
 exports.checkPrMinLines = checkPrMinLines;
 const micromatch_1 = __importDefault(__nccwpck_require__(3095));
+const ALWAYS_SKIP = [
+    '.github/**',
+    '**/*.lock',
+    '**/*.snap',
+    'package-lock.json',
+    'pnpm-lock.yaml',
+    'yarn.lock',
+    '.ripple.yml',
+];
 function splitFiles(files, config, impactedPaths) {
     let candidates;
     if (impactedPaths !== null) {
@@ -707,6 +720,10 @@ function splitFiles(files, config, impactedPaths) {
     if (config.includePatterns.length > 0) {
         candidates = candidates.filter(f => micromatch_1.default.isMatch(f.path, config.includePatterns));
     }
+    // Always skip these, on top of any user skip-patterns. Reviewing CI config
+    // and lockfiles burns tokens and reliably produces false positives — an LLM
+    // will read `${{ secrets.FOO }}` as a hardcoded credential.
+    candidates = candidates.filter(f => !micromatch_1.default.isMatch(f.path, ALWAYS_SKIP));
     if (config.skipPatterns.length > 0) {
         candidates = candidates.filter(f => !micromatch_1.default.isMatch(f.path, config.skipPatterns));
     }
