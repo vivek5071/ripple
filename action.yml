@@ -1,5 +1,5 @@
-name: 'PR Ripple'
-description: 'Detect downstream-impacted files on PRs and route owners for approval'
+name: 'Ripple'
+description: 'Find who your PR breaks downstream and auto-request their review'
 author: 'vivek5071'
 
 inputs:
