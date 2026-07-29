@@ -1,4 +1,4 @@
-name: 'Ripple'
+name: 'PR Ripple'
 description: 'Find who your PR breaks downstream and auto-request their review'
 author: 'vivek5071'
 
