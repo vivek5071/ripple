@@ -1,4 +1,3 @@
-import * as fs from 'fs'
 import * as core from '@actions/core'
 import { sanitizeDiff } from './secret-sanitizer'
 import type { FileDiff, Finding, ReviewOptions } from './types'
@@ -207,20 +206,6 @@ async function callLlm(
   }
 }
 
-// ponytail: flat line cap, not a symbol-aware window. Swap for enclosing-scope
-// extraction if token cost on large files becomes a problem.
-const MAX_CONTEXT_LINES = 400
-
-function readFileContext(filePath: string): string | null {
-  try {
-    const lines = fs.readFileSync(filePath, 'utf8').split('\n')
-    if (lines.length > MAX_CONTEXT_LINES) return null
-    return lines.join('\n')
-  } catch {
-    return null
-  }
-}
-
 function firstString(...candidates: unknown[]): string {
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim().length > 0) return c
@@ -272,16 +257,7 @@ async function reviewFileWithRetry(
     core.info(`ai-review: redacted ${redactedCount} potential secret(s) in ${file.path}`)
   }
 
-  // A diff alone does not carry intent — you cannot tell that an `actorId`
-  // parameter is meant to authorize anything when you only see added lines.
-  // The repo is already checked out, so include the surrounding file (capped)
-  // and let the model see what the changed code sits next to.
-  const context = readFileContext(file.path)
-  const contextBlock = context
-    ? `\n\nFull file for context (review ONLY the diff above; use this to understand intent):\n\`\`\`\n${context}\n\`\`\``
-    : ''
-
-  const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\`${contextBlock}`
+  const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\``
 
   core.info(`ai-review: reviewing ${file.path} (~${file.lineCount} changed lines)`)
 
