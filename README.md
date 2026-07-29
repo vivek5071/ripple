@@ -66,14 +66,14 @@ Create `.ripple.yml` in your repo root:
 ```yaml
 # yaml-language-server: $schema=./ripple.schema.json
 paths:
-  'src/api/**': alice
+  'src/api/**': demo-alice
   'src/db/**':
-    - bob
-    - charlie
-  'src/auth/**': carol
+    - demo-bob
+    - demo-charlie
+  'src/auth/**': demo-carol
   'src/shared/**':
-    - alice
-    - carol
+    - demo-alice
+    - demo-carol
 ```
 
 Globs use [micromatch](https://github.com/micromatch/micromatch) syntax. The first matching pattern wins. Handles are GitHub usernames without the `@`.
@@ -101,11 +101,11 @@ That's it. Ripple will start posting reports on every PR.
 
 ### Owners to notify (2)
 
-**@alice** — 2 files
+**@demo-alice** — 2 files
 - `src/api/users.ts`
 - `src/api/payments.ts`
 
-**@bob** — 1 file
+**@demo-bob** — 1 file
 - `src/db/user-repo.ts`
 
 ### Files with no owner
