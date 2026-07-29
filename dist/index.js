@@ -107,7 +107,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.validateApiUrl = validateApiUrl;
 exports.runAiReview = runAiReview;
-const fs = __importStar(__nccwpck_require__(9896));
 const core = __importStar(__nccwpck_require__(6966));
 const secret_sanitizer_1 = __nccwpck_require__(9268);
 // Cost per 1M tokens [input, output]. Unknown models use the conservative fallback.
@@ -264,20 +263,6 @@ async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeout
         completionTokens: data.usage?.completion_tokens ?? 0,
     };
 }
-// ponytail: flat line cap, not a symbol-aware window. Swap for enclosing-scope
-// extraction if token cost on large files becomes a problem.
-const MAX_CONTEXT_LINES = 400;
-function readFileContext(filePath) {
-    try {
-        const lines = fs.readFileSync(filePath, 'utf8').split('\n');
-        if (lines.length > MAX_CONTEXT_LINES)
-            return null;
-        return lines.join('\n');
-    }
-    catch {
-        return null;
-    }
-}
 function firstString(...candidates) {
     for (const c of candidates) {
         if (typeof c === 'string' && c.trim().length > 0)
@@ -313,15 +298,7 @@ async function reviewFileWithRetry(file, apiUrl, apiKey, model, systemPrompt, ti
     if (redactedCount > 0) {
         core.info(`ai-review: redacted ${redactedCount} potential secret(s) in ${file.path}`);
     }
-    // A diff alone does not carry intent — you cannot tell that an `actorId`
-    // parameter is meant to authorize anything when you only see added lines.
-    // The repo is already checked out, so include the surrounding file (capped)
-    // and let the model see what the changed code sits next to.
-    const context = readFileContext(file.path);
-    const contextBlock = context
-        ? `\n\nFull file for context (review ONLY the diff above; use this to understand intent):\n\`\`\`\n${context}\n\`\`\``
-        : '';
-    const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\`${contextBlock}`;
+    const userContent = `File: ${file.path}\n\n\`\`\`diff\n${sanitized}\n\`\`\``;
     core.info(`ai-review: reviewing ${file.path} (~${file.lineCount} changed lines)`);
     let lastErr;
     for (let attempt = 0; attempt <= retryLimit; attempt++) {
