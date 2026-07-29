@@ -1,6 +1,16 @@
 import micromatch from 'micromatch'
 import type { ChangedFile, AiReviewConfig, FileDiff } from './types'
 
+const ALWAYS_SKIP = [
+  '.github/**',
+  '**/*.lock',
+  '**/*.snap',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  '.ripple.yml',
+]
+
 export function splitFiles(
   files: ChangedFile[],
   config: AiReviewConfig,
@@ -20,6 +30,11 @@ export function splitFiles(
   if (config.includePatterns.length > 0) {
     candidates = candidates.filter(f => micromatch.isMatch(f.path, config.includePatterns))
   }
+
+  // Always skip these, on top of any user skip-patterns. Reviewing CI config
+  // and lockfiles burns tokens and reliably produces false positives — an LLM
+  // will read `${{ secrets.FOO }}` as a hardcoded credential.
+  candidates = candidates.filter(f => !micromatch.isMatch(f.path, ALWAYS_SKIP))
 
   if (config.skipPatterns.length > 0) {
     candidates = candidates.filter(f => !micromatch.isMatch(f.path, config.skipPatterns))
