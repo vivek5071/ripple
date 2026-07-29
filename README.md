@@ -230,7 +230,9 @@ ai-review:
   model: llama-3.3-70b-versatile
 ```
 
-Setup, provider table, focus values, and all options: **[docs/ai-review.md](docs/ai-review.md)**
+It catches mistakes that are visible in the changed lines — swapped arguments, off-by-one cursors, discarded promise rejections, unparameterized SQL. It does not catch missing authorization or access-control checks, because spotting an absent check requires knowing which one was required, and that policy is not in the diff. Pair it with [CodeQL](https://codeql.github.com/) if you need that. Advisory only; it never gates a merge.
+
+Setup, provider table, focus values, scope, and all options: **[docs/ai-review.md](docs/ai-review.md)**
 
 ---
 

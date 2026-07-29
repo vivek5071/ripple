@@ -4,6 +4,31 @@ Ripple can call any OpenAI-compatible LLM to review the diff for logical errors,
 
 ![AI Review comment showing 2 logical errors caught on a real PR](ai-review-demo.png)
 
+## What AI Review is scoped to catch
+
+AI Review reads **the diff**. That single fact determines what it can and cannot find.
+
+It reliably catches **presence bugs** — where the mistake is visible in the changed lines:
+
+- Swapped arguments — `[userId, offset, limit]` where the query expects `limit, offset`
+- Off-by-one and wrong-index errors — `rows[0].id` where a cursor needs `rows[rows.length - 1].id`
+- Discarded promise rejections — `.catch(() => {})`
+- Untrusted values interpolated into SQL, shell, or HTML instead of being parameterized
+
+These share one property: the wrong code is *in the diff*. Something incorrect was written down, and it can be read.
+
+It does **not** catch **absence bugs** — where the mistake is a check that was never written:
+
+- Missing authorization — a `requestedBy` parameter accepted and never verified against the resource being acted on
+- Missing access control between tenants or accounts
+- Missing rate limits, quotas, or audit logging
+
+This is a scope boundary, not a tuning gap, and a stronger model does not move it. To flag a missing authorization check you must first know that one was *required* — which means knowing who is permitted to act on what. That policy lives in your product requirements, not in your source code, and it never appears in a diff. A reviewer new to your codebase would miss it for the same reason.
+
+**Use a dedicated scanner for that class.** [CodeQL](https://codeql.github.com/) is free on public repositories and does taint tracking across the whole codebase rather than a single diff. [Semgrep](https://semgrep.dev/) is good for enforcing team-specific authorization patterns. Run one alongside Ripple — they answer different questions.
+
+This is why AI Review is advisory and never gates a merge. Treat it as a fast second pair of eyes on the lines that changed, not as a security gate.
+
 ## 1. Enable in `.ripple.yml`
 
 ```yaml
@@ -71,16 +96,18 @@ Multiple values: `focus: logical-errors,security,error-handling`
 ```
 ## AI Review
 
-> llama-3.3-70b-versatile · 2 issues found · 1 file reviewed · commit abc1234
+> Model: llama-3.3-70b-versatile · 2 issues found
 
-### src/services/tradeService.ts
+### ⚠ Logical error — `src/services/tradeService.ts:114`
+Incorrect entry type assignment: BUY should produce a DEBIT, not a CREDIT
+**Impact:** Ledger entries are inverted for every buy, so balances drift
+**Fix:** Swap the condition — `input.action === 'BUY' ? 'DEBIT' : 'CREDIT'`
 
-**Line 114 — logical-error**
-Incorrect entry type: `BUY` should produce a `DEBIT` (money leaving the account), not `CREDIT`.
-Fix: swap the condition — `input.action === 'BUY' ? 'DEBIT' : 'CREDIT'`
+### ⚠ Logical error — `src/services/tradeService.ts:162`
+Next cursor is set to the first trade's ID instead of the last
+**Impact:** The next page re-fetches overlapping results
+**Fix:** Use `trades[trades.length - 1].id`
 
-**Line 162 — logical-error**
-Wrong pagination cursor: `trades[0]!.id` points to the first item in the current page,
-not the last. The next page would re-fetch overlapping results.
-Fix: use `trades[trades.length - 1]!.id` (or `trades.at(-1)!.id`).
+---
+> Advisory · Last evaluated: abc1234 · 1 file reviewed · ~$0.0008
 ```
