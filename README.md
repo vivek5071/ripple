@@ -133,6 +133,21 @@ paths:
 | `max-owners-per-pr` | `10` | If more unique owners are found than this cap, Ripple falls back to advisory for that run. |
 | `team-lead` | `` | GitHub handle used as fallback when the PR author is the sole owner of every impacted file (avoids review deadlock). |
 | `bot-patterns` | `` | Comma-separated glob patterns for bot handles that lack the `[bot]` suffix — e.g. `renovate,devin-ai`. GitHub App bots ending in `[bot]` are detected automatically. |
+| `dry-run` | `false` | Runs the full analysis but posts nothing and requests no reviews. See below. |
+| `ai-api-key` | `` | API key for the LLM endpoint in `.ripple.yml`. Only needed when `ai-review.enabled` is true. Masked in all logs. |
+
+### Try it without touching your team
+
+`dry-run` runs the whole pipeline and logs what Ripple *would* have done — the report goes to the Actions log instead of the PR, reviewers are logged instead of requested, AI review is skipped. Nothing is posted.
+
+```yaml
+- uses: vivek5071/ripple@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    dry-run: true
+```
+
+Point it at a real repo, open a PR, and read the log. If the owners it picks look right, drop `dry-run` and it starts commenting.
 
 ---
 
