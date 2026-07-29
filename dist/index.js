@@ -193,8 +193,13 @@ function buildSystemPrompt(focusList) {
         'Identify only concrete, actionable issues. Do not praise. Do not summarize.',
         `Focus: ${areas}.`,
         '',
-        'For each issue respond with JSON matching the FindingSchema.',
-        'If no issues found, return an empty findings array.',
+        // The json_schema response_format is rejected by several providers (Groq
+        // among them), and on fallback the model never sees FINDING_SCHEMA. Spell
+        // the shape out here so field names survive every negotiation mode.
+        'Respond with a JSON object of exactly this shape:',
+        '{"findings": [{"file": "<path>", "line": <integer or null>, "category": "<one of: logical-error, error-handling, security, broken-assumption>", "description": "<what is wrong>", "impact": "<what breaks in practice>", "fix": "<how to correct it>"}]}',
+        'Every key is required on every finding. Use "" rather than omitting a string.',
+        'If no issues found, return {"findings": []}.',
         'Only report issues visible in the diff. Do not speculate beyond the shown code.',
     ].join('\n');
 }
@@ -254,6 +259,13 @@ async function callLlm(apiUrl, apiKey, model, systemPrompt, userContent, timeout
         completionTokens: data.usage?.completion_tokens ?? 0,
     };
 }
+function firstString(...candidates) {
+    for (const c of candidates) {
+        if (typeof c === 'string' && c.trim().length > 0)
+            return c;
+    }
+    return '';
+}
 function parseFindings(content, filePath) {
     try {
         const parsed = JSON.parse(content);
@@ -262,9 +274,12 @@ function parseFindings(content, filePath) {
                 file: typeof f.file === 'string' ? f.file : filePath,
                 line: typeof f.line === 'number' ? f.line : null,
                 category: f.category ?? 'logical-error',
-                description: String(f.description ?? ''),
-                impact: String(f.impact ?? ''),
-                fix: String(f.fix ?? ''),
+                // Providers without structured-output support paraphrase the key names.
+                // Fall back through the synonyms they actually emit before giving up,
+                // otherwise the finding renders as a heading with no body.
+                description: firstString(f.description, f.issue, f.message, f.problem, f.explanation, f.title),
+                impact: firstString(f.impact, f.consequence, f.effect),
+                fix: firstString(f.fix, f.suggestion, f.recommendation, f.remediation),
             }));
         }
     }
