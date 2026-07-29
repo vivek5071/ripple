@@ -8,17 +8,23 @@
 
 > **See it live:** [ripple-demo PR #1](https://github.com/vivek5071/ripple-demo/pull/1) — a real PR where Ripple scanned the repo and posted this report.
 
-Works like the SonarQube report you already know, but for ownership and impact instead of code quality.
-
 ---
 
-## How it works
+## Why not CODEOWNERS?
 
-1. **Diff** — reads the PR's changed files via the GitHub API
-2. **Track A** — detects changes to contract files (`openapi.yaml`, `*.proto`, `schema.prisma`, route files, migrations) and finds their consumers across the repo
-3. **Track B** — extracts exported symbols from the diff and ripgreps the repo for callers
-4. **Owner resolution** — maps impacted files to GitHub handles via `.ripple.yml` → git blame → GitHub Search API
-5. **Report** — posts a grouped PR comment; in gate mode, requests reviews from every owner
+CODEOWNERS notifies whoever *wrote* the files you changed. Ripple notifies whoever *depends on* them — the people whose code your change could break, who never touched a line in your diff.
+
+| | CODEOWNERS | Ripple |
+|---|---|---|
+| **Who gets notified** | Authors of changed files | Owners of files that depend on the change |
+| **Detection method** | File path matching | Symbol extraction + contract file tracking |
+| **Bot PR enforcement** | No | Yes — auto-gates bot PRs |
+| **Fallback when no owner** | Silent | git blame → GitHub Search API |
+| **Advisory mode** | No | Yes — report without blocking |
+
+Use CODEOWNERS to control who can approve changes to specific files. Use Ripple to notify the people whose code could break because of a change they didn't touch.
+
+They are complementary — you can run both.
 
 ---
 
@@ -73,6 +79,46 @@ paths:
 Globs use [micromatch](https://github.com/micromatch/micromatch) syntax. The first matching pattern wins. Handles are GitHub usernames without the `@`.
 
 That's it. Ripple will start posting reports on every PR.
+
+---
+
+## How it works
+
+1. **Diff** — reads the PR's changed files via the GitHub API
+2. **Track A** — detects changes to contract files (`openapi.yaml`, `*.proto`, `schema.prisma`, route files, migrations) and finds their consumers across the repo
+3. **Track B** — extracts exported symbols from the diff and ripgreps the repo for callers
+4. **Owner resolution** — maps impacted files to GitHub handles via `.ripple.yml` → git blame → GitHub Search API
+5. **Report** — posts a grouped PR comment; in gate mode, requests reviews from every owner
+
+---
+
+## Example PR comment
+
+```
+## Ripple Report
+
+> Scanned 8,432 files in 1,847ms · gate mode
+
+### Owners to notify (2)
+
+**@alice** — 2 files
+- `src/api/users.ts`
+- `src/api/payments.ts`
+
+**@bob** — 1 file
+- `src/db/user-repo.ts`
+
+### Files with no owner
+
+Add these paths to `.ripple.yml` so future PRs are routed automatically:
+
+paths:
+  'src/lib/format.ts': your-handle
+
+---
+> **Bot PR** — gate mode auto-applied because @devin-ai is a bot.
+  All impacted file owners must approve before merge.
+```
 
 ---
 
@@ -155,54 +201,6 @@ A JSON Schema is included for IDE validation. Add this comment to the top of you
 ```
 
 VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) will validate globs and owner values as you type.
-
----
-
-## Why not CODEOWNERS?
-
-CODEOWNERS assigns reviewers based on who *wrote* the changed files. Ripple assigns reviewers based on who *consumes* the changed files downstream.
-
-| | CODEOWNERS | Ripple |
-|---|---|---|
-| **Who gets notified** | Authors of changed files | Owners of files that depend on the change |
-| **Detection method** | File path matching | Symbol extraction + contract file tracking |
-| **Bot PR enforcement** | No | Yes — auto-gates bot PRs |
-| **Fallback when no owner** | Silent | git blame → GitHub Search API |
-| **Advisory mode** | No | Yes — report without blocking |
-
-Use CODEOWNERS if you want to control who can approve changes to specific files. Use Ripple if you want to notify the people whose code could break because of a change they didn't touch.
-
-They are complementary — you can run both.
-
----
-
-## Example PR comment
-
-```
-## Ripple Report
-
-> Scanned 8,432 files in 1,847ms · gate mode
-
-### Owners to notify (2)
-
-**@alice** — 2 files
-- `src/api/users.ts`
-- `src/api/payments.ts`
-
-**@bob** — 1 file
-- `src/db/user-repo.ts`
-
-### Files with no owner
-
-Add these paths to `.ripple.yml` so future PRs are routed automatically:
-
-paths:
-  'src/lib/format.ts': your-handle
-
----
-> **Bot PR** — gate mode auto-applied because @devin-ai is a bot.
-  All impacted file owners must approve before merge.
-```
 
 ---
 
