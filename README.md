@@ -219,9 +219,11 @@ VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?ite
 
 ---
 
-## AI Review (opt-in extra)
+## Experimental AI review
 
-Ripple can also run an LLM pass over the diff itself (logical errors, security, error handling) using any OpenAI-compatible provider — Groq's free tier, OpenAI, Azure, or a local Ollama/vLLM. It's off by default and separate from the ownership report:
+> **Status: Experimental.** AI review is opt-in and disabled by default. Evaluate its output on your repository before relying on it. Do not use it as a security check or merge requirement.
+
+Ripple can send changed lines to an OpenAI-compatible provider such as Groq, OpenAI, Azure, Ollama, or vLLM. The ownership report works without this feature.
 
 ```yaml
 ai-review:
@@ -230,7 +232,7 @@ ai-review:
   model: llama-3.3-70b-versatile
 ```
 
-It catches mistakes that are visible in the changed lines — swapped arguments, off-by-one cursors, discarded promise rejections, unparameterized SQL. It does not catch missing authorization or access-control checks, because spotting an absent check requires knowing which one was required, and that policy is not in the diff. Pair it with [CodeQL](https://codeql.github.com/) if you need that. Advisory only; it never gates a merge.
+The reviewer checks changed lines for possible logic, injection, and error-handling problems. Results depend on the selected model and the context available in the diff. Use [CodeQL](https://codeql.github.com/) or another dedicated scanner for security enforcement. Ripple posts AI findings as advisory comments and does not use them to gate a merge.
 
 Setup, provider table, focus values, scope, and all options: **[docs/ai-review.md](docs/ai-review.md)**
 

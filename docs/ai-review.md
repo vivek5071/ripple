@@ -1,33 +1,21 @@
-# AI Review
+# Experimental AI review
 
-Ripple can call any OpenAI-compatible LLM to review the diff for logical errors, security issues, and missing error handling — and post the findings as a separate comment on the PR. It is fully opt-in and independent of the ownership/impact report.
+> **Status: Experimental.** AI review is opt-in and disabled by default. Its output depends on the selected model, provider, and context available in the diff. Evaluate it on your repository before relying on its findings. Do not use it as a security check or merge requirement.
 
-![AI Review comment showing 2 logical errors caught on a real PR](ai-review-demo.png)
+Ripple can send a pull request diff to an OpenAI-compatible model and post the findings in a separate comment. The ownership and impact report works without this feature.
 
-## What AI Review is scoped to catch
+![Example AI review comment from a demo pull request](ai-review-demo.png)
 
-AI Review reads **the diff**. That single fact determines what it can and cannot find.
+## Review scope
 
-It reliably catches **presence bugs** — where the mistake is visible in the changed lines:
+AI review receives the changed lines rather than full product requirements or runtime context. It can flag possible problems visible in the diff, including:
 
-- Swapped arguments — `[userId, offset, limit]` where the query expects `limit, offset`
-- Off-by-one and wrong-index errors — `rows[0].id` where a cursor needs `rows[rows.length - 1].id`
-- Discarded promise rejections — `.catch(() => {})`
-- Untrusted values interpolated into SQL, shell, or HTML instead of being parameterized
+- Swapped function arguments
+- Off-by-one and incorrect-index errors
+- Discarded promise rejections
+- Untrusted values interpolated into SQL, shell commands, or HTML
 
-These share one property: the wrong code is *in the diff*. Something incorrect was written down, and it can be read.
-
-It does **not** catch **absence bugs** — where the mistake is a check that was never written:
-
-- Missing authorization — a `requestedBy` parameter accepted and never verified against the resource being acted on
-- Missing access control between tenants or accounts
-- Missing rate limits, quotas, or audit logging
-
-This is a scope boundary, not a tuning gap, and a stronger model does not move it. To flag a missing authorization check you must first know that one was *required* — which means knowing who is permitted to act on what. That policy lives in your product requirements, not in your source code, and it never appears in a diff. A reviewer new to your codebase would miss it for the same reason.
-
-**Use a dedicated scanner for that class.** [CodeQL](https://codeql.github.com/) is free on public repositories and does taint tracking across the whole codebase rather than a single diff. [Semgrep](https://semgrep.dev/) is good for enforcing team-specific authorization patterns. Run one alongside Ripple — they answer different questions.
-
-This is why AI Review is advisory and never gates a merge. Treat it as a fast second pair of eyes on the lines that changed, not as a security gate.
+The model has limited context for controls omitted from the diff, such as authorization, tenant isolation, rate limits, quotas, or audit logging. Use [CodeQL](https://codeql.github.com/) or [Semgrep](https://semgrep.dev/) for enforceable security checks. Ripple posts AI findings as advisory comments and does not use them to gate a merge.
 
 ## 1. Enable in `.ripple.yml`
 
